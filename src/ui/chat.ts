@@ -1,0 +1,157 @@
+import type { VoiceState } from '../net/voice';
+import { MAX_CHAT_LENGTH } from '../net/protocol';
+import { h } from './dom';
+
+export type ChatKind = 'me' | 'them' | 'system';
+
+export interface ChatOptions {
+  /** Returns false if the message could not be sent. */
+  onSend(text: string): boolean;
+  voice: {
+    supported: boolean;
+    onStart(): void;
+    onToggleMute(): void;
+    onHangUp(): void;
+  } | null;
+  onUnreadChange(n: number): void;
+}
+
+const DESKTOP = '(min-width: 900px)';
+
+/**
+ * Chat log + input + voice controls. A side panel on desktop, a slide-up drawer on phones.
+ * All message text is inserted with textContent, never as HTML.
+ */
+export class ChatPanel {
+  readonly el: HTMLElement;
+  private log: HTMLElement;
+  private input: HTMLInputElement;
+  private chip: HTMLElement;
+  private voiceBtn: HTMLButtonElement | null = null;
+  private muteBtn: HTMLButtonElement | null = null;
+  private voiceNote: HTMLElement | null = null;
+  private unread = 0;
+  private open = false;
+
+  constructor(private opts: ChatOptions) {
+    this.chip = h('span', { class: 'chip', text: 'Connecting…' });
+    this.log = h('div', { class: 'chat-log', attrs: { role: 'log', 'aria-live': 'polite' } });
+    this.input = h('input', {
+      class: 'chat-input',
+      attrs: { type: 'text', maxlength: String(MAX_CHAT_LENGTH), placeholder: 'Type a message…', autocomplete: 'off', 'aria-label': 'Chat message' },
+    });
+    const form = h(
+      'form',
+      {
+        class: 'chat-form',
+        on: {
+          submit: (e) => {
+            e.preventDefault();
+            const text = this.input.value.trim();
+            if (!text) return;
+            if (opts.onSend(text)) {
+              this.addMessage('me', text);
+              this.input.value = '';
+            } else {
+              this.addMessage('system', 'Message not sent: not connected.');
+            }
+          },
+        },
+      },
+      this.input,
+      h('button', { class: 'btn primary', text: 'Send', attrs: { type: 'submit' } }),
+    );
+
+    const header = h(
+      'div',
+      { class: 'chat-header' },
+      h('strong', { text: 'Chat' }),
+      this.chip,
+      h('button', { class: 'icon-btn chat-close', text: '✕', attrs: { 'aria-label': 'Close chat', type: 'button' }, on: { click: () => this.setOpen(false) } }),
+    );
+
+    const parts: (HTMLElement | null)[] = [header];
+    if (opts.voice) {
+      const v = opts.voice;
+      this.voiceBtn = h('button', { class: 'btn', text: '🎤 Start voice', attrs: { type: 'button' }, on: { click: () => this.voiceClick() } });
+      this.muteBtn = h('button', { class: 'btn', text: 'Mute', attrs: { type: 'button', hidden: '' }, on: { click: () => v.onToggleMute() } });
+      this.voiceNote = h('div', { class: 'voice-note', attrs: { hidden: '' } });
+      if (!v.supported) {
+        this.voiceBtn.disabled = true;
+        this.voiceBtn.title = 'Voice needs microphone support (and a secure page)';
+      }
+      parts.push(h('div', { class: 'voice-bar' }, this.voiceBtn, this.muteBtn), this.voiceNote);
+    }
+    parts.push(this.log, form);
+    this.el = h('aside', { class: 'chat', attrs: { 'aria-label': 'Chat' } }, ...parts);
+  }
+
+  private voiceState: VoiceState = 'idle';
+  private voiceClick(): void {
+    const v = this.opts.voice!;
+    if (this.voiceState === 'idle') v.onStart();
+    else v.onHangUp();
+  }
+
+  setVoiceState(s: VoiceState, muted: boolean): void {
+    this.voiceState = s;
+    if (!this.voiceBtn || !this.muteBtn) return;
+    this.voiceBtn.textContent = s === 'idle' ? '🎤 Start voice' : s === 'starting' ? 'Connecting… (hang up)' : '📞 Hang up';
+    this.muteBtn.hidden = s === 'idle';
+    this.muteBtn.textContent = muted ? 'Unmute' : 'Mute';
+    this.voiceBtn.classList.toggle('active', s === 'in-call');
+  }
+
+  setStatus(text: string, kind: 'ok' | 'warn' | 'bad'): void {
+    this.chip.textContent = text;
+    this.chip.dataset.kind = kind;
+  }
+
+  private visible(): boolean {
+    return this.open || window.matchMedia(DESKTOP).matches;
+  }
+
+  setOpen(o: boolean): void {
+    this.open = o;
+    this.el.classList.toggle('open', o);
+    if (o) {
+      this.clearUnread();
+      this.input.focus();
+    }
+  }
+
+  toggle(): void {
+    this.setOpen(!this.open);
+  }
+
+  private clearUnread(): void {
+    this.unread = 0;
+    this.opts.onUnreadChange(0);
+  }
+
+  addMessage(kind: ChatKind, text: string): void {
+    const d = new Date();
+    const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const row = h(
+      'div',
+      { class: `msg ${kind}` },
+      kind === 'system' ? null : h('span', { class: 'msg-who', text: kind === 'me' ? 'You' : 'Opponent' }),
+      h('span', { class: 'msg-text', text }),
+      kind === 'system' ? null : h('span', { class: 'msg-time', text: time }),
+    );
+    this.log.append(row);
+    while (this.log.childElementCount > 300) this.log.firstElementChild?.remove();
+    this.log.scrollTop = this.log.scrollHeight;
+    if (kind === 'them' && !this.visible()) {
+      this.unread++;
+      this.opts.onUnreadChange(this.unread);
+    }
+  }
+
+  /** Short note under the voice buttons (errors, hints). */
+  setVoiceNote(text: string): void {
+    if (!this.voiceNote) return;
+    this.voiceNote.textContent = text;
+    this.voiceNote.hidden = !text;
+  }
+}

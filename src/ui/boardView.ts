@@ -1,0 +1,251 @@
+import { MILLS, NUM_POINTS, pointGrid } from '../engine/board';
+import type { Action, GameState, Player } from '../engine/state';
+import { clear, svgEl, svgFragment } from './dom';
+import type { Theme } from './themes/theme';
+
+const SIZE = 600;
+const CELL = 80;
+const PIECE_R = 22;
+const HIT_R = 34;
+
+export interface Overlay {
+  selected: number | null;
+  /** Empty points the current player may place on / slide to. */
+  targets: readonly number[];
+  /** Opponent pieces that may be removed. */
+  capturable: readonly number[];
+}
+
+export const NO_OVERLAY: Overlay = { selected: null, targets: [], capturable: [] };
+
+export function pointXY(p: number): { x: number; y: number } {
+  const g = pointGrid(p);
+  return { x: SIZE / 2 + g.x * CELL, y: SIZE / 2 + g.y * CELL };
+}
+
+/** SVG board: chalk lines, pieces, highlights and tap targets. */
+export class BoardView {
+  readonly el: SVGSVGElement;
+  private pieceLayer: SVGGElement;
+  private hlLayer: SVGGElement;
+  private glowLayer: SVGGElement;
+  private pieces = new Map<number, SVGGElement>();
+  private timers = new Set<number>();
+  private interactive = true;
+
+  constructor(
+    private theme: Theme,
+    private onTap: (point: number) => void,
+  ) {
+    this.el = svgEl('svg', {
+      viewBox: `0 0 ${SIZE} ${SIZE}`,
+      class: 'board-svg',
+      role: 'img',
+      'aria-label': 'Pedda Dhadi board',
+    });
+    for (const n of svgFragment(theme.floor)) this.el.append(n);
+    this.el.append(this.buildLines());
+    this.glowLayer = svgEl('g', { class: 'glow-layer' });
+    this.hlLayer = svgEl('g', { class: 'hl-layer' });
+    this.pieceLayer = svgEl('g', { class: 'piece-layer' });
+    this.el.append(this.glowLayer, this.hlLayer, this.pieceLayer, this.buildHits());
+  }
+
+  private buildLines(): SVGGElement {
+    const t = this.theme.lines;
+    const g = svgEl('g', { class: 'lines' });
+    const strokes = svgEl('g', {
+      fill: 'none',
+      stroke: t.stroke,
+      'stroke-width': t.width,
+      'stroke-linecap': 'round',
+      'stroke-linejoin': 'round',
+      ...(t.filter ? { filter: t.filter } : {}),
+    });
+    for (let ring = 0; ring < 3; ring++) {
+      const a = pointXY(ring * 8);
+      const c = pointXY(ring * 8 + 4);
+      strokes.append(svgEl('rect', { x: a.x, y: a.y, width: c.x - a.x, height: c.y - a.y }));
+    }
+    for (const pos of [1, 3, 5, 7]) {
+      const a = pointXY(pos);
+      const b = pointXY(16 + pos);
+      strokes.append(svgEl('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y }));
+    }
+    g.append(strokes);
+    for (let i = 0; i < NUM_POINTS; i++) {
+      const { x, y } = pointXY(i);
+      g.append(svgEl('circle', { cx: x, cy: y, r: t.pointRadius, fill: t.pointFill, opacity: 0.95 }));
+    }
+    return g;
+  }
+
+  private buildHits(): SVGGElement {
+    const g = svgEl('g', { class: 'hits' });
+    for (let i = 0; i < NUM_POINTS; i++) {
+      const { x, y } = pointXY(i);
+      const c = svgEl('circle', { cx: x, cy: y, r: HIT_R, class: 'hit', 'data-point': i });
+      g.append(c);
+    }
+    g.addEventListener('click', (e) => {
+      if (!this.interactive) return;
+      const t = (e.target as Element).closest('[data-point]');
+      if (t) this.onTap(Number(t.getAttribute('data-point')));
+    });
+    return g;
+  }
+
+  setInteractive(on: boolean): void {
+    this.interactive = on;
+    this.el.classList.toggle('locked', !on);
+  }
+
+  private schedule(fn: () => void, ms: number): void {
+    const id = window.setTimeout(() => {
+      this.timers.delete(id);
+      fn();
+    }, ms);
+    this.timers.add(id);
+  }
+
+  private createPiece(point: number, player: Player, animateIn: boolean): SVGGElement {
+    const { x, y } = pointXY(point);
+    const outer = svgEl('g', { class: 'piece', 'data-player': player, 'data-point': point });
+    outer.style.transform = `translate(${x}px, ${y}px)`;
+    const body = svgEl('g', { class: animateIn ? 'piece-body pop' : 'piece-body' });
+    for (const n of svgFragment(this.theme.piece(player, PIECE_R))) body.append(n);
+    outer.append(body);
+    this.pieceLayer.append(outer);
+    this.pieces.set(point, outer);
+    return outer;
+  }
+
+  /** Make the DOM match `state` exactly, without animation. */
+  sync(state: GameState): void {
+    for (let i = 0; i < NUM_POINTS; i++) {
+      const want = state.board[i];
+      const el = this.pieces.get(i);
+      if (el && String(want) !== el.getAttribute('data-player')) {
+        el.remove();
+        this.pieces.delete(i);
+      }
+      if (want !== -1 && !this.pieces.has(i)) this.createPiece(i, want as Player, false);
+    }
+  }
+
+  /** Reset everything (new game / undo). */
+  reset(state: GameState): void {
+    for (const t of this.timers) clearTimeout(t);
+    this.timers.clear();
+    clear(this.pieceLayer);
+    clear(this.glowLayer);
+    this.pieces.clear();
+    this.sync(state);
+  }
+
+  /** Animate the visual effect of `action`, then make the DOM match `next`. */
+  animate(action: Action, next: GameState, mover: Player): void {
+    switch (action.type) {
+      case 'place':
+        this.pieces.get(action.to)?.remove();
+        this.createPiece(action.to, mover, true);
+        break;
+      case 'move': {
+        const el = this.pieces.get(action.from);
+        if (el) {
+          this.pieces.delete(action.from);
+          this.pieces.set(action.to, el);
+          el.setAttribute('data-point', String(action.to));
+          const { x, y } = pointXY(action.to);
+          el.style.transform = `translate(${x}px, ${y}px)`;
+          el.classList.add('sliding');
+          this.schedule(() => el.classList.remove('sliding'), 320);
+        }
+        break;
+      }
+      case 'remove': {
+        const el = this.pieces.get(action.at);
+        if (el) {
+          this.pieces.delete(action.at);
+          el.classList.add('captured');
+          this.schedule(() => el.remove(), 480);
+        }
+        break;
+      }
+    }
+    this.sync(next);
+    if (next.formed.length > 0 && action.type !== 'remove') this.flashMills(next.formed);
+  }
+
+  /** Briefly glow the lines of newly formed dhadis. */
+  flashMills(millIndices: readonly number[]): void {
+    for (const mi of millIndices) {
+      const m = MILLS[mi];
+      const a = pointXY(m[0]);
+      const b = pointXY(m[2]);
+      const line = svgEl('line', {
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        class: 'mill-glow',
+        stroke: this.theme.highlight.mill,
+        'stroke-width': 14,
+        'stroke-linecap': 'round',
+        filter: this.theme.highlight.millFilter,
+      });
+      this.glowLayer.append(line);
+      this.schedule(() => line.remove(), 1500);
+    }
+  }
+
+  setOverlay(o: Overlay): void {
+    clear(this.hlLayer);
+    const hl = this.theme.highlight;
+    if (o.selected !== null) {
+      const { x, y } = pointXY(o.selected);
+      this.hlLayer.append(
+        svgEl('circle', { cx: x, cy: y, r: PIECE_R + 9, fill: 'none', stroke: hl.selected, 'stroke-width': 4, class: 'hl-selected' }),
+      );
+    }
+    for (const t of o.targets) {
+      const { x, y } = pointXY(t);
+      this.hlLayer.append(
+        svgEl('circle', { cx: x, cy: y, r: 13, fill: hl.target, class: 'hl-target' }),
+        svgEl('circle', { cx: x, cy: y, r: 21, fill: 'none', stroke: hl.target, 'stroke-width': 2.5, class: 'hl-target-ring' }),
+      );
+    }
+    for (const c of o.capturable) {
+      const { x, y } = pointXY(c);
+      this.hlLayer.append(
+        svgEl('circle', {
+          cx: x,
+          cy: y,
+          r: PIECE_R + 8,
+          fill: 'none',
+          stroke: hl.capture,
+          'stroke-width': 4,
+          'stroke-dasharray': '7 5',
+          class: 'hl-capture',
+        }),
+      );
+    }
+    // Point cursor feedback on tap targets.
+    const clickable = new Set<number>([...o.targets, ...o.capturable]);
+    for (const el of this.el.querySelectorAll<SVGElement>('.hit')) {
+      el.classList.toggle('active', clickable.has(Number(el.getAttribute('data-point'))));
+    }
+  }
+
+  /** Mark the pieces that can currently be picked up (own pieces with a free neighbour). */
+  setMovable(points: readonly number[]): void {
+    const set = new Set(points);
+    for (const [p, el] of this.pieces) el.classList.toggle('movable', set.has(p));
+  }
+
+  destroy(): void {
+    for (const t of this.timers) clearTimeout(t);
+    this.timers.clear();
+    this.el.remove();
+  }
+}
