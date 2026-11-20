@@ -44,6 +44,7 @@ export class BoardView {
   private timers = new Set<number>();
   private interactive = true;
 
+  private hoverLayer: SVGGElement = svgEl('g', { class: 'hover-layer' });
   private lastState: GameState | null = null;
   private lastOverlay: Overlay = NO_OVERLAY;
   private lastMovable: readonly number[] = [];
@@ -74,7 +75,8 @@ export class BoardView {
     const nodes = this.render.level === 'low' && !this.render.assets.board ? stripFilters(floor) : floor;
     for (const n of nodes) this.el.append(n);
     if (!this.render.assets.boardIncludesLines || !this.render.assets.board) this.el.append(this.buildLines());
-    this.el.append(this.glowLayer, this.hlLayer, this.pieceLayer, this.buildHits());
+    if (this.ultraCarved) this.el.append(...svgFragment(this.carvedDefs()));
+    this.el.append(this.glowLayer, this.hlLayer, this.hoverLayer, this.pieceLayer, this.buildHits());
   }
 
   /** Board floor from a photographic texture: one image, or a tiled pattern, with rounded corners. */
@@ -164,12 +166,40 @@ export class BoardView {
       const c = svgEl('circle', { cx: x, cy: y, r: HIT_R, class: 'hit', 'data-point': i });
       g.append(c);
     }
+    g.addEventListener('pointermove', (e) => {
+      if (e.pointerType !== 'mouse') return; // touch: placing is a single tap, nothing extra to show
+      const t = (e.target as Element).closest('[data-point]');
+      this.showHover(t ? Number(t.getAttribute('data-point')) : null);
+    });
+    g.addEventListener('pointerleave', () => this.showHover(null));
     g.addEventListener('click', (e) => {
       if (!this.interactive) return;
       const t = (e.target as Element).closest('[data-point]');
       if (t) this.onTap(Number(t.getAttribute('data-point')));
     });
     return g;
+  }
+
+  /** Carved indicators on a baked board (High and Ultra). */
+  private get carved(): boolean {
+    return !!this.render.assets.boardIncludesLines && !!this.render.assets.board && this.render.level !== 'low';
+  }
+  /** At Ultra the indicators are chiselled in the board's own stone material, without any colour. */
+  private get ultraCarved(): boolean {
+    return this.carved && this.render.level === 'ultra';
+  }
+  private hoverPoint: number | null = null;
+
+  private showHover(p: number | null): void {
+    if (p === this.hoverPoint) return;
+    this.hoverPoint = p;
+    clear(this.hoverLayer);
+    const o = this.lastOverlay;
+    // Placing phase only (no piece selected): preview the point under the pointer.
+    if (p === null || !this.carved || o.selected !== null || !o.targets.includes(p)) return;
+    const { x, y } = pointXY(p);
+    if (this.ultraCarved) this.hoverLayer.append(...this.groove(x, y, PIECE_R + 9, 2.6, { opacity: 0.6 }));
+    else this.hoverLayer.append(svgEl('circle', { cx: x, cy: y, r: 9, fill: '#ff9a4a', opacity: 0.5 }), ...this.carvedRing(x, y, 15, 2.2, '#8a4a22'));
   }
 
   setInteractive(on: boolean): void {
@@ -206,7 +236,7 @@ export class BoardView {
       // Carved boards: the stone sits a little inside its cup so the carved rim shows around it.
       const half = PIECE_R * (this.render.assets.boardIncludesLines ? 0.97 : 1.22);
       if (this.render.assets.pieceShadow) {
-        body.append(svgEl('image', { href: this.render.assets.pieceShadow, x: -half, y: -half, width: half * 2, height: half * 2 }));
+        body.append(svgEl('image', { href: this.render.assets.pieceShadow, x: -half, y: -half, width: half * 2, height: half * 2, class: 'piece-shadow' }));
       } else if (this.render.level === 'ultra') {
         body.append(svgEl('ellipse', { cx: 1.5, cy: PIECE_R * 0.45, rx: PIECE_R * 0.95, ry: PIECE_R * 0.5, fill: '#000', opacity: 0.4, filter: 'url(#q-shadow)' }));
       }
@@ -216,6 +246,10 @@ export class BoardView {
       for (const n of this.render.level === 'low' ? stripFilters(markup) : markup) body.append(n);
     }
     outer.append(body);
+    if (animateIn) {
+      outer.classList.add('landing');
+      this.schedule(() => outer.classList.remove('landing'), 360);
+    }
     this.pieceLayer.append(outer);
     this.pieces.set(point, outer);
     return outer;
@@ -281,6 +315,10 @@ export class BoardView {
 
   /** Briefly glow the lines of newly formed dhadis. */
   flashMills(millIndices: readonly number[]): void {
+    if (this.ultraCarved) {
+      this.glint(millIndices);
+      return;
+    }
     for (const mi of millIndices) {
       const m = MILLS[mi];
       const a = pointXY(m[0]);
@@ -315,18 +353,104 @@ export class BoardView {
     ];
   }
 
+  /** Ultra: one light glint sweeps along the carved line of a formed dhadi (no colour). */
+  private glint(millIndices: readonly number[]): void {
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    for (const mi of millIndices) {
+      const m = MILLS[mi];
+      const a = pointXY(m[0]);
+      const b = pointXY(m[2]);
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const ang = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+      const g = svgEl('g', { transform: `translate(${a.x} ${a.y}) rotate(${ang})` });
+      const line = reduced
+        ? svgEl('line', { x1: 0, y1: 0, x2: len, y2: 0, stroke: '#fff6e6', 'stroke-width': 3, 'stroke-linecap': 'round', class: 'cv-glint-fade' })
+        : svgEl('line', { x1: -16, y1: 0, x2: 16, y2: 0, stroke: `url(#${this.uid}-glint)`, 'stroke-width': 7, 'stroke-linecap': 'round', class: 'cv-glint' });
+      line.style.setProperty('--len', `${len}px`);
+      g.append(line);
+      this.glowLayer.append(g);
+      this.schedule(() => g.remove(), 1100);
+    }
+  }
+
+  private carvedDefs(): string {
+    const id = this.uid;
+    const tex = this.render.assets.chisel;
+    // The groove floor is literally the chisel texture used for the board, darkened (it sits in shade).
+    const floor = tex
+      ? `<pattern id="${id}-chisel" width="160" height="160" patternUnits="userSpaceOnUse"><image href="${tex}" width="160" height="160" preserveAspectRatio="none"/><rect width="160" height="160" fill="#000" opacity="0.42"/></pattern>`
+      : `<pattern id="${id}-chisel" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#6f6252"/></pattern>`;
+    return `<defs>${floor}<linearGradient id="${id}-glint" gradientUnits="userSpaceOnUse" x1="-16" x2="16" y1="0" y2="0"><stop offset="0" stop-color="#fff6e6" stop-opacity="0"/><stop offset="0.5" stop-color="#fff6e6" stop-opacity="0.95"/><stop offset="1" stop-color="#fff6e6" stop-opacity="0"/></linearGradient></defs>`;
+  }
+
+  /**
+   * A ring chiselled into the stone (Ultra): chisel-textured floor, dark wall on the upper-left, lit lip on the lower-right.
+   * Each layer is its own circle, so rotating / breathing one about its own centre only moves the dash pattern or the size and
+   * the lighting direction never turns.
+   */
+  private groove(
+    x: number,
+    y: number,
+    r: number,
+    w: number,
+    o: { dash?: string; cap?: 'round' | 'butt'; motion?: 'rot' | 'breathe' | 'pulse' | null; opacity?: number } = {},
+  ): SVGElement[] {
+    const motion = o.motion ?? null;
+    const mk = (dx: number, dy: number, sw: number, stroke: string, op: number, extra = '') => {
+      const c = svgEl('circle', {
+        cx: x + dx, cy: y + dy, r, fill: 'none', stroke, 'stroke-width': sw, opacity: op * (o.opacity ?? 1),
+        ...(o.dash ? { 'stroke-dasharray': o.dash, 'stroke-linecap': o.cap ?? 'butt' } : {}),
+      });
+      const cls = [motion === 'rot' ? 'cv-rot' : motion === 'breathe' ? 'cv-breathe' : '', extra].filter(Boolean).join(' ');
+      if (cls) c.setAttribute('class', cls);
+      return c;
+    };
+    return [
+      mk(1.0, 1.0, w + 1.4, '#f3dfbd', 0.6, motion === 'pulse' ? 'cv-pulse' : ''), // lit lip, lower-right
+      mk(-1.0, -1.0, w + 1.6, '#000', 0.85), // shadowed wall, upper-left
+      mk(0, 0, w, `url(#${this.uid}-chisel)`, 1), // chiselled floor
+    ];
+  }
+
+  private setUltraOverlay(o: Overlay): void {
+    const L = this.hlLayer;
+    const placing = o.selected === null && o.capturable.length === 0;
+    if (o.selected !== null) {
+      const { x, y } = pointXY(o.selected);
+      // solid ring, static shape; the lit lip slowly brightens and dims
+      L.append(...this.groove(x, y, PIECE_R + 9, 3.2, { motion: 'pulse' }));
+    }
+    if (!placing) {
+      for (const t of o.targets) {
+        const { x, y } = pointXY(t);
+        // dotted ring of small chiselled dimples that gently breathes
+        const r = 17;
+        const n = 12;
+        L.append(...this.groove(x, y, r, 4.6, { dash: `0.01 ${(2 * Math.PI * r) / n}`, cap: 'round', motion: 'breathe' }));
+      }
+    }
+    for (const c of o.capturable) {
+      const { x, y } = pointXY(c);
+      const r = PIECE_R + 10;
+      const dash = (2 * Math.PI * r) / 8;
+      // dashed ring, slowly rotating (only the dash pattern moves)
+      L.append(...this.groove(x, y, r, 3.4, { dash: `${dash * 0.58} ${dash * 0.42}`, motion: 'rot' }));
+    }
+    this.markClickable(o);
+  }
+
   private setCarvedOverlay(o: Overlay): void {
     const L = this.hlLayer;
+    const placing = o.selected === null && o.capturable.length === 0;
     if (o.selected !== null) {
       const { x, y } = pointXY(o.selected);
       L.append(...this.carvedRing(x, y, PIECE_R + 9, 3, '#e9b866'), svgEl('circle', { cx: x, cy: y, r: PIECE_R + 9, fill: 'none', stroke: '#ffd79a', 'stroke-width': 1.2, opacity: 0.9, class: 'hl-selected' }));
     }
-    for (const t of o.targets) {
-      const { x, y } = pointXY(t);
-      L.append(
-        svgEl('circle', { cx: x, cy: y, r: 9, fill: '#ff9a4a', opacity: 0.45, class: 'hl-target' }),
-        ...this.carvedRing(x, y, 15, 2.2, '#8a4a22'),
-      );
+    if (!placing) {
+      for (const t of o.targets) {
+        const { x, y } = pointXY(t);
+        L.append(svgEl('circle', { cx: x, cy: y, r: 9, fill: '#ff9a4a', opacity: 0.45, class: 'hl-target' }), ...this.carvedRing(x, y, 15, 2.2, '#8a4a22'));
+      }
     }
     for (const c of o.capturable) {
       const { x, y } = pointXY(c);
@@ -357,7 +481,13 @@ export class BoardView {
   setOverlay(o: Overlay): void {
     this.lastOverlay = o;
     clear(this.hlLayer);
-    if (this.render.assets.boardIncludesLines && this.render.assets.board && this.render.level !== 'low') {
+    clear(this.hoverLayer);
+    this.hoverPoint = null;
+    if (this.ultraCarved) {
+      this.setUltraOverlay(o);
+      return;
+    }
+    if (this.carved) {
       this.setCarvedOverlay(o);
       return;
     }

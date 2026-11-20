@@ -54,6 +54,8 @@ export interface ThemeAssets {
   pieces?: [ImageSet | undefined, ImageSet | undefined];
   /** Baked soft contact shadow drawn under each piece image (same box as the stone image). */
   pieceShadow?: string;
+  /** Chiselled-stone texture used as the material of engraved indicators at Ultra. */
+  chisel?: string;
 }
 
 export interface StrokeLayer {

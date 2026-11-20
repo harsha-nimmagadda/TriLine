@@ -38,7 +38,9 @@
       "height": 1024,
       "prompt": "top-down macro photograph of rough hand-chiselled light grey-beige granite stone surface, visible chisel tool marks, coarse sandy grain, dusty, matte, flat even diffuse lighting, no shadows, highly detailed",
       "negative_extra": "dark, black, polished, shiny, wet, cracks, perspective, border, colour cast",
-      "export": {}
+      "export": {
+        "ultra": 512
+      }
     },
     "table": {
       "kind": "background",

@@ -110,7 +110,7 @@ describe('asset manifest', () => {
     for (const t of THEMES) {
       for (const lvl of ['high', 'ultra'] as const) {
         const w = wantedPaths(t.assets, lvl);
-        for (const p of [w.board, w.background, w.pieceShadow, ...w.pieces, ...w.pieceVariants[0], ...w.pieceVariants[1]]) if (p) expect(existsSync(join('public', p)), `${t.id} ${p}`).toBe(true);
+        for (const p of [w.board, w.background, w.pieceShadow, w.chisel, ...w.pieces, ...w.pieceVariants[0], ...w.pieceVariants[1]]) if (p) expect(existsSync(join('public', p)), `${t.id} ${p}`).toBe(true);
       }
     }
   });

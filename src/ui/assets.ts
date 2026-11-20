@@ -13,6 +13,7 @@ export interface LoadedAssets {
   /** Ultra: several images per side; pieces choose one deterministically. */
   pieceVariants: [string[], string[]];
   pieceShadow?: string;
+  chisel?: string;
 }
 
 export const NO_ASSETS: LoadedAssets = { pieces: [undefined, undefined], pieceVariants: [[], []] };
@@ -39,6 +40,7 @@ export function wantedPaths(assets: ThemeAssets | undefined, level: QualityLevel
     boardTile: assets?.boardTile,
     boardIncludesLines: assets?.boardIncludesLines,
     pieceShadow: level === 'high' || level === 'ultra' ? assets?.pieceShadow : undefined,
+    chisel: level === 'ultra' ? assets?.chisel : undefined,
     pieceVariants: [
       level === 'ultra' ? (assets?.pieces?.[0]?.ultraVariants ?? []) : [],
       level === 'ultra' ? (assets?.pieces?.[1]?.ultraVariants ?? []) : [],
@@ -91,6 +93,7 @@ export async function loadAssets(theme: Theme, level: QualityLevel, probe: Probe
   };
   const [board, background, p0, p1] = await Promise.all([check(want.board), check(want.background), check(want.pieces[0]), check(want.pieces[1])]);
   const pieceShadow = await check(want.pieceShadow);
+  const chisel = await check(want.chisel);
   const variants = await Promise.all(
     want.pieceVariants.map(async (list) => (await Promise.all(list.map((x) => check(x)))).filter((u): u is string => !!u)),
   );
@@ -103,6 +106,7 @@ export async function loadAssets(theme: Theme, level: QualityLevel, probe: Probe
     // With variants available, the single-image slot (HUD icons, fallbacks) uses the first variant.
     pieces: [p0 ?? pieceVariants[0][0], p1 ?? pieceVariants[1][0]],
     pieceVariants,
+    chisel,
     pieceShadow: pieceShadow && (p0 || p1 || pieceVariants[0].length || pieceVariants[1].length) ? pieceShadow : undefined,
   };
 }
