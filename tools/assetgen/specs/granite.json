@@ -1,0 +1,45 @@
+{
+  "theme": "granite",
+  "_comment": "Edit prompts freely. 'draft' overrides apply with --draft (fast SDXL-Turbo previews). Sizes are SDXL-friendly.",
+  "models": {
+    "main": "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors",
+    "draft": "sd_xl_turbo_1.0_fp16.safetensors"
+  },
+  "params": {
+    "main": { "steps": 30, "cfg": 5.0, "sampler": "dpmpp_2m", "scheduler": "karras" },
+    "draft": { "steps": 4, "cfg": 1.0, "sampler": "euler_ancestral", "scheduler": "normal", "long_edge": 512 }
+  },
+  "negative": "text, watermark, logo, signature, border, frame, vignette, people, hands, cartoon, illustration, painting, 3d render, glossy, polished, shiny reflections, wet, blurry, low quality, jpeg artifacts",
+  "assets": {
+    "board": {
+      "kind": "texture",
+      "width": 1024, "height": 1024,
+      "prompt": "seamless tileable texture of unpolished rough granite stone floor, top-down orthographic view, matte surface, fine speckled grain of grey, black and faint pinkish minerals, slightly rough pitted surface, even soft diffuse lighting, no shadows, no cracks, macro photograph, highly detailed",
+      "negative_extra": "perspective, horizon, cracks, large veins, lighting gradient, hot spots, shadows",
+      "export": { "ultra": 2048, "high": 1024 }
+    },
+    "background": {
+      "kind": "background",
+      "width": 1344, "height": 768,
+      "prompt": "dark grey granite stone courtyard slab surface, top-down view, very subtle speckled texture, low contrast, soft out-of-focus, uniform dim lighting, calm muted charcoal tones, empty, no objects",
+      "negative_extra": "high contrast, bright spots, objects, plants, people, strong shadows, cracks, perspective horizon",
+      "export": { "ultra": 2560, "high": 1440 }
+    },
+    "piece_p1": {
+      "kind": "piece",
+      "width": 1024, "height": 1024,
+      "bg_color": "magenta",
+      "prompt": "a single cowrie shell, top-down view, creamy ivory white glossy shell with the characteristic toothed slit, isolated object centered, studio product photo, soft even lighting, on a flat solid pure magenta background (#ff00ff)",
+      "negative_extra": "multiple objects, shadow on background, gradient background, text, hands, sand, water",
+      "export": { "ultra": 256, "high": 128 }
+    },
+    "piece_p2": {
+      "kind": "piece",
+      "width": 1024, "height": 1024,
+      "bg_color": "magenta",
+      "prompt": "a single smooth dark river stone, top-down view, polished black-grey pebble with subtle fine texture and a soft highlight, rounded oval, isolated object centered, studio product photo, soft even lighting, on a flat solid pure magenta background (#ff00ff)",
+      "negative_extra": "multiple objects, shadow on background, gradient background, text, hands, sand, water",
+      "export": { "ultra": 256, "high": 128 }
+    }
+  }
+}
