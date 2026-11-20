@@ -259,6 +259,51 @@ def relight_stone(img: Image.Image) -> Image.Image:
     return Image.fromarray((out * 255 + 0.5).astype(np.uint8), "RGBA")
 
 
+BALANCE: dict = {}
+
+
+def stone_stats(imgs):
+    import numpy as np
+    L, C = [], []
+    for im in imgs:
+        a = np.asarray(im.convert("RGBA"), np.float32) / 255.0
+        m = a[..., 3] > 0.9
+        rgb = a[..., :3][m]
+        L.append(0.299 * rgb[:, 0] + 0.587 * rgb[:, 1] + 0.114 * rgb[:, 2])
+        C.append(rgb.max(axis=1) - rgb.min(axis=1))
+    return float(np.concatenate(L).mean()), float(np.concatenate(C).mean())
+
+
+def balance_sets(theme: str) -> None:
+    """Match red jasper (p1) to lapis (p2) in mean luminance and chroma; report before/after."""
+    import numpy as np
+    fin = SRC / theme / "pieces" / "final"
+    sets = {k: [relight_stone(Image.open(f).convert("RGBA")) for f in sorted(fin.glob(f"{k}_*.png"))] for k in ("p1", "p2")}
+    if not sets["p1"] or not sets["p2"]:
+        return
+    l2, c2 = stone_stats(sets["p2"])
+    l1, c1 = stone_stats(sets["p1"])
+    gain = l2 / l1
+    chroma = (c2 / c1) / gain   # applied before the gain, so the final chroma matches
+    BALANCE["p1"] = (gain, chroma)
+    out = []
+    for im in sets["p1"]:
+        out.append(apply_balance(im, gain, chroma))
+    l1b, c1b = stone_stats(out)
+    say(f"balance: lapis L={l2:.3f} chroma={c2:.3f}; jasper before L={l1:.3f} chroma={c1:.3f} -> after L={l1b:.3f} chroma={c1b:.3f} (gain {gain:.2f}, chroma x{chroma:.2f})")
+
+
+def apply_balance(img: Image.Image, gain: float, chroma: float) -> Image.Image:
+    import numpy as np
+    a = np.asarray(img.convert("RGBA"), np.float32) / 255.0
+    rgb = a[..., :3]
+    lum = (0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2])[..., None]
+    rgb = lum + (rgb - lum) * chroma          # chroma about the luma axis
+    rgb = rgb * gain
+    out = np.concatenate([np.clip(rgb, 0, 1), a[..., 3:4]], axis=-1)
+    return Image.fromarray((out * 255 + 0.5).astype(np.uint8), "RGBA")
+
+
 def make_piece_shadow(path: Path, size: int = 192) -> None:
     """Soft contact shadow, same box as a stone image; offset to the lower right (light is upper left)."""
     import numpy as np
@@ -285,9 +330,12 @@ def export_pieces(theme: str, a: dict, out_dir: Path) -> None:
         say(f"- {prefix}: no pieces/final/{prefix}_*.png, skipped")
         return
     make_piece_shadow(out_dir / "piece_shadow.webp")
+    balance_sets(theme)
     say(f"- {(out_dir / 'piece_shadow.webp').relative_to(ROOT)}  192x192")
     for f in finals:
         img = relight_stone(Image.open(f).convert("RGBA"))
+        if prefix in BALANCE:
+            img = apply_balance(img, *BALANCE[prefix])
         for level, size in (("ultra", 256), ("high", 128)):
             path = out_dir / f"piece_{f.stem}.{level}.webp"
             img.resize((size, size), Image.LANCZOS).save(path, "WEBP", quality=92, alpha_quality=100, method=6)

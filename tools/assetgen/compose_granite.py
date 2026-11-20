@@ -51,7 +51,7 @@ DEFAULTS = dict(
     groove_width=9.0,      # units at the surface (lip to lip)
     groove_slope=0.95,     # depth/half-width: steeper = deeper V
     cup_radius=24.0,       # units
-    cup_depth=40.0,        # px at 2048
+    cup_depth=52.0,        # px at 2048
     frame_inset=26.0,      # units from the slab edge to the channel centre-line
     frame_width=15.0,      # units
     frame_depth=13.0,      # px
@@ -124,7 +124,9 @@ def height_fields(o: dict):
         cd = np.minimum(cd, np.hypot(X - x * s, Y - y * s))
     r0 = o["cup_radius"] * s
     t = np.clip(cd / r0, 0, 1)
-    cups = np.where(cd < r0, o["cup_depth"] * (1 - t ** 3.2) ** 0.5, 0).astype(np.float32)
+    wall = 0.30                                    # fraction of the radius occupied by the sloped wall
+    u = np.clip((1 - t) / wall, 0, 1)
+    cups = np.where(cd < r0, o["cup_depth"] * (u * u * (3 - 2 * u)), 0).astype(np.float32)   # smoothstep wall, flat floor
     # grooves stop at the cup rim
     lines = np.where(cd < r0, 0, lines).astype(np.float32)
     # frame channel: trapezoid profile (chamfered walls, flat chiselled floor)
@@ -156,7 +158,8 @@ def compose(granite_path: Path, chisel_path: Path, out_path: Path, **overrides) 
     cl_hp = cl - gauss(cl, 6 * s / 3.4)  # tool marks / grain
     cl_hp = cl_hp / (cl_hp.std() + 1e-6)
     # roughness only exists inside the carving; lips stay crisp
-    depth = np.maximum(carve, hf["edge"]) + cav * o["rough"] * cl_hp * 0.55 + gauss(cav, 1.0) * cav * 0
+    cup_zone = (hf['cd'] < hf['r0']).astype(np.float32)
+    depth = np.maximum(carve, hf["edge"]) + cav * o["rough"] * cl_hp * 0.55 * (1 - 0.65 * cup_zone)
     depth = gauss(depth.astype(np.float32), 0.7)
 
     # ---- normals + lighting --------------------------------------------------------------------------
@@ -178,18 +181,25 @@ def compose(granite_path: Path, chisel_path: Path, out_path: Path, **overrides) 
     alb = (alb - 0.5) * 1.35 + 0.5
     alb = np.clip(alb * np.array([0.78, 0.74, 0.68], np.float32), 0, 1)  # darker, muted, slightly warm
     amb = o["ambient"]
-    cav_light = amb + (1 - amb) * np.clip(rel, 0, 2.1)
-    cupness = np.clip(1 - hf['cd'] / (hf['r0'] * 1.02), 0, 1)
-    cup_shade = 1 - 0.28 * np.clip(cupness * 3, 0, 1)   # the hollows sit in a bit more shade
+    cav_light = amb + (1 - amb) * np.clip(rel, 0, 1.8)
+    # cup hollows: the floor is a lot darker than the walls (it sits in shade), walls keep the full directional light
+    fdepth = np.clip(hf['cups'] / o['cup_depth'], 0, 1)            # 0 at the rim .. 1 at the centre
+    in_cup = (hf['cd'] < hf['r0']).astype(np.float32)
+    smooth_alb = gauss(alb[..., 0], 3.0)[..., None] * (alb / (alb.mean(axis=2, keepdims=True) + 1e-6)) 
+    flat = (in_cup * np.clip(fdepth * 3, 0, 1))[..., None]
+    alb = alb * (1 - 0.8 * flat) + smooth_alb * 0.8 * flat
+    cup_shade = 1 - in_cup * (0.90 * fdepth ** 0.9)
     carved = alb * (cav_light * ao * cup_shade)[..., None]
     # thin catch-light on faces turned towards the light
-    spec = np.clip(rel - 1.12, 0, 1) ** 1.3 * 0.8
+    spec = np.clip(rel - 1.12, 0, 1) ** 1.3 * 0.55
     carved = carved + spec[..., None] * np.array([0.9, 0.78, 0.55], np.float32)
     # soft dust collected in the low places and along the lit lip
     dust_n = np.clip(noise(n, 1.1 * s / 3.4, rng) * 0.5 + 0.35, 0, 1)
     low = np.clip(gauss(carve, 4 * s / 3.4) / 10.0, 0, 1)
     dust = (dust_n * low * 0.30)[..., None] * np.array([0.78, 0.68, 0.52], np.float32)
-    carved = np.clip(carved + dust * ao[..., None], 0, 1)
+    # a little dust pooled on the cup floors
+    pool = (in_cup * fdepth ** 2.0 * np.clip(noise(n, 1.4 * s / 3.4, rng) * 0.6 + 0.2, 0, 1) * 0.22)[..., None] * np.array([0.62, 0.52, 0.38], np.float32)
+    carved = np.clip(carved + dust * ao[..., None] + pool, 0, 1)
 
     # ---- polished granite surface --------------------------------------------------------------------
     tex = _load(granite_path, n)
@@ -217,10 +227,10 @@ def compose(granite_path: Path, chisel_path: Path, out_path: Path, **overrides) 
     # ---- global look: warm low light, broad gradient, polished sheen, far-corner falloff ------------------
     yy, xx = np.mgrid[0:n, 0:n].astype(np.float32) / n
     d = np.hypot(xx - 0.12, yy - 0.08) / 1.25
-    grad = np.clip(2.45 - 1.95 * d, 0.5, 2.5)
-    warm = np.stack([np.clip(1.05 - 0.08 * d, 0, 2), np.clip(0.97 - 0.02 * d, 0, 2), np.clip(0.84 + 0.14 * d, 0, 2)], axis=-1)
+    grad = np.clip(2.7 - 2.0 * d, 0.5, 2.8)
+    warm = np.stack([np.clip(1.04 - 0.08 * d, 0, 2), np.clip(0.97 - 0.02 * d, 0, 2), np.clip(0.88 + 0.12 * d, 0, 2)], axis=-1)
     img = img * (grad[..., None] * warm)
-    sheen = np.exp(-(((xx - 0.20) / 0.30) ** 2 + ((yy - 0.16) / 0.20) ** 2)) * 0.085
+    sheen = np.exp(-(((xx - 0.20) / 0.30) ** 2 + ((yy - 0.16) / 0.20) ** 2)) * 0.12
     sheen += np.exp(-(((xx - 0.55 - 0.3 * (yy - 0.5)) / 0.05) ** 2)) * 0.012  # faint diagonal reflection band
     img = img + (sheen * (1 - cav))[..., None] * np.array([1.0, 0.86, 0.66], np.float32)
 

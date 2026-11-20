@@ -1,13 +1,13 @@
 import type { Theme } from './theme';
 
-/** Granite: speckled stone with chalk lines at Low/Medium; at High/Ultra a carved black-granite slab on a wooden table. Tiger's eye versus lapis cabochons. */
+/** Granite: speckled stone with chalk lines at Low/Medium; at High/Ultra a carved black-granite slab on a wooden table. Red jasper versus lapis cabochons. */
 export const granite: Theme = {
   id: 'granite',
   name: 'Granite',
-  blurb: 'Carved granite slab, tiger\'s eye and lapis stones',
-  sideNames: ['Tiger\'s eye', 'Lapis'],
+  blurb: 'Carved granite slab, red jasper and lapis stones',
+  sideNames: ['Red jasper', 'Lapis'],
   scheme: 'dark',
-  swatches: { side0: '#d99a3a', side1: '#142a85', board: '#555550' },
+  swatches: { side0: '#ea6f52', side1: '#0f1f66', board: '#555550' },
   cssVars: {
     '--font': "'Segoe UI', 'Helvetica Neue', system-ui, -apple-system, sans-serif",
     '--bg': '#1a1612',
@@ -91,10 +91,10 @@ export const granite: Theme = {
       <feGaussianBlur stdDeviation="5" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
-    <radialGradient id="gr-tiger" cx="38%" cy="30%" r="85%">
-      <stop offset="0%" stop-color="#f0c060"/>
-      <stop offset="55%" stop-color="#c98a2b"/>
-      <stop offset="100%" stop-color="#7a4a12"/>
+    <radialGradient id="gr-jasper" cx="38%" cy="30%" r="85%">
+      <stop offset="0%" stop-color="#f58a68"/>
+      <stop offset="55%" stop-color="#dc5b3e"/>
+      <stop offset="100%" stop-color="#8a2a18"/>
     </radialGradient>
     <radialGradient id="gr-lapis" cx="38%" cy="30%" r="85%">
       <stop offset="0%" stop-color="#4a6be0"/>
@@ -125,15 +125,12 @@ export const granite: Theme = {
   piece(player, r) {
     const shadow = `<ellipse cx="2" cy="${r * 0.5}" rx="${r * 0.95}" ry="${r * 0.55}" fill="#000" opacity="0.5" filter="url(#gr-shadow)"/>`;
     if (player === 0) {
-      // Tiger's eye cabochon: golden brown with dark chatoyant bands and a soft highlight.
-      const band = (x: number, w: number, o: number) => {
-        const ry = 0.92 * Math.sqrt(Math.max(0, 1 - x * x)) * r;
-        return `<ellipse cx="${x * r}" cy="0" rx="${w * r}" ry="${ry}" fill="#2a1406" opacity="${o}"/>`;
-      };
+      // Red jasper cabochon: brick red with darker veins and a soft highlight.
       return `${shadow}
-        <circle r="${r}" fill="url(#gr-tiger)" stroke="#4a2a0a" stroke-width="1.6"/>
-        ${band(-0.32, 0.07, 0.75)}${band(0.12, 0.1, 0.8)}${band(0.45, 0.05, 0.6)}
-        <ellipse cx="${-r * 0.3}" cy="${-r * 0.42}" rx="${r * 0.3}" ry="${r * 0.14}" fill="#fff" opacity="0.5" transform="rotate(-28 ${-r * 0.3} ${-r * 0.42})"/>`;
+        <circle r="${r}" fill="url(#gr-jasper)" stroke="#4a1208" stroke-width="1.6"/>
+        <path d="M ${-r * 0.7} ${r * 0.1} Q ${-r * 0.1} ${-r * 0.35} ${r * 0.65} ${r * 0.05}" fill="none" stroke="#5a1a0e" stroke-width="${r * 0.12}" stroke-linecap="round" opacity="0.7"/>
+        <path d="M ${-r * 0.3} ${r * 0.6} Q ${r * 0.2} ${r * 0.35} ${r * 0.5} ${r * 0.55}" fill="none" stroke="#5a1a0e" stroke-width="${r * 0.08}" stroke-linecap="round" opacity="0.6"/>
+        <ellipse cx="${-r * 0.3}" cy="${-r * 0.42}" rx="${r * 0.3}" ry="${r * 0.14}" fill="#fff" opacity="0.45" transform="rotate(-28 ${-r * 0.3} ${-r * 0.42})"/>`;
     }
     // Lapis lazuli cabochon: deep blue with gold pyrite flecks.
     const fleck = (x: number, y: number, k: number) => `<circle cx="${x * r}" cy="${y * r}" r="${k * r}" fill="#e8c158" opacity="0.9"/>`;
