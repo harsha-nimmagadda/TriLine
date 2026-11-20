@@ -226,6 +226,33 @@ def cmd_cabochons(args) -> None:
     say(f"{len(files)} {prefix} variants in {out_dir.relative_to(ROOT)} (see {prefix}_contact.png); delete unwanted PNGs by hand, keep 4-6")
 
 
+def cmd_stones(args) -> None:
+    """Cut the single stone out of each per-stone candidate with a fitted circular mask -> pieces/<prefix>_NN.png"""
+    spec = load_spec(args.spec or args.theme)
+    prefix = spec["assets"][args.asset]["piece"]
+    out_dir = SRC / args.theme / "pieces"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for f in out_dir.glob(f"{prefix}_*.png"):
+        f.unlink()
+    n = 0
+    for f in sorted((SRC / args.theme / args.asset).glob("cand_*.png")):
+        if "mask" in f.name:
+            continue
+        img = Image.open(f).convert("RGB")
+        found = cabochons.find_single(img)
+        if not found:
+            say(f"{f.name}: no stone found")
+            continue
+        cx, cy, r, aspect = found
+        note = "" if 0.93 < aspect < 1.07 else "  (not round?)"
+        say(f"{f.name}: centre ({cx:.0f},{cy:.0f}) r={r:.0f} aspect={aspect:.2f}{note}")
+        cabochons.cut_circle(img, cx, cy, r, 512, margin=0.05, shrink=0.985).save(out_dir / f"{prefix}_{int(f.stem.split('_')[1]):02d}.png")
+        n += 1
+    files = sorted(out_dir.glob(f"{prefix}_*.png"))
+    imgtools.contact_sheet([Image.open(x) for x in files], [x.stem for x in files], thumb=200, cols=5).save(out_dir / f"{prefix}_contact.png")
+    say(f"{n} stones cut; see pieces/{prefix}_contact.png; copy the best 6 to pieces/final/{prefix}_0..5.png")
+
+
 # ---- tile preview ---------------------------------------------------------------------------
 
 def cmd_tile_preview(args) -> None:
@@ -467,6 +494,10 @@ def main() -> None:
     cb.add_argument("theme"); cb.add_argument("asset"); cb.add_argument("--cands", required=True, help="comma-separated candidate numbers")
     cb.add_argument("--spec"); cb.add_argument("--min-blue", type=float, default=0.0); cb.add_argument("--clear", action="store_true")
     cb.set_defaults(fn=cmd_cabochons)
+
+    st = sub.add_parser("stones", help="cut single-stone candidates with a circular mask")
+    st.add_argument("theme"); st.add_argument("asset"); st.add_argument("--spec")
+    st.set_defaults(fn=cmd_stones)
 
     t = sub.add_parser("tile-preview", help="2x2 tiling of a texture to check seams")
     t.add_argument("theme"); t.add_argument("asset"); t.add_argument("--cand")

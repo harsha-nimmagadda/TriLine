@@ -104,6 +104,7 @@ button:disabled { cursor: not-allowed; }
 .hl-target-ring { opacity: .45; pointer-events: none; }
 .hl-selected, .hl-capture { pointer-events: none; }
 .hl-capture { animation: dash 1s linear infinite, pulse 1s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.hl-ember { transform-box: fill-box; transform-origin: center; animation: spin 12s linear infinite; will-change: transform; pointer-events: none; }
 .mill-glow { animation: mill 1.5s ease-out forwards; pointer-events: none; }
 @keyframes pop { 0% { transform: scale(.2) translateY(-18px); opacity: 0; } 60% { transform: scale(1.18); opacity: 1; } 100% { transform: scale(1); } }
 @keyframes vanish { 0% { transform: scale(1); opacity: 1; } 30% { transform: scale(1.25); opacity: 1; } 100% { transform: scale(0); opacity: 0; } }
@@ -178,7 +179,7 @@ html.modal-open, html.modal-open body { overflow: hidden; overscroll-behavior: n
 }
 @media (prefers-reduced-motion: reduce) {
   .piece.sliding { transition-duration: .01s; }
-  .hl-target, .hl-capture, .piece.movable .piece-body { animation: none; }
+  .hl-target, .hl-capture, .hl-ember, .piece.movable .piece-body { animation: none; }
 }
 
 /* ---- online ---- */

@@ -301,9 +301,66 @@ export class BoardView {
     }
   }
 
+  /**
+   * Carved overlays (baked-light boards at High/Ultra): rings are "engraved" into the stone with a dark wall on the
+   * upper-left and a lit wall on the lower-right (the same direction as the board render's light).
+   */
+  private carvedRing(x: number, y: number, r: number, width: number, ink: string): SVGElement[] {
+    const mk = (dx: number, dy: number, w: number, stroke: string, op: number) =>
+      svgEl('circle', { cx: x + dx, cy: y + dy, r, fill: 'none', stroke, 'stroke-width': w, opacity: op });
+    return [
+      mk(0.9, 0.9, width * 0.6, '#f0d4a8', 0.5), // lit lower-right wall
+      mk(-0.8, -0.8, width * 1.15, '#000000', 0.7), // shadowed upper-left wall
+      mk(0, 0, width, ink, 1),
+    ];
+  }
+
+  private setCarvedOverlay(o: Overlay): void {
+    const L = this.hlLayer;
+    if (o.selected !== null) {
+      const { x, y } = pointXY(o.selected);
+      L.append(...this.carvedRing(x, y, PIECE_R + 9, 3, '#e9b866'), svgEl('circle', { cx: x, cy: y, r: PIECE_R + 9, fill: 'none', stroke: '#ffd79a', 'stroke-width': 1.2, opacity: 0.9, class: 'hl-selected' }));
+    }
+    for (const t of o.targets) {
+      const { x, y } = pointXY(t);
+      L.append(
+        svgEl('circle', { cx: x, cy: y, r: 9, fill: '#ff9a4a', opacity: 0.45, class: 'hl-target' }),
+        ...this.carvedRing(x, y, 15, 2.2, '#8a4a22'),
+      );
+    }
+    for (const c of o.capturable) {
+      const { x, y } = pointXY(c);
+      const r = PIECE_R + 10;
+      const circ = 2 * Math.PI * r;
+      const n = 10;
+      const dash = circ / n;
+      L.append(
+        ...this.carvedRing(x, y, r, 3.2, '#2a0f08'),
+        // ember segments running inside the groove; only this group rotates, so the carving's lighting stays fixed
+        svgEl('circle', { cx: x, cy: y, r, fill: 'none', stroke: '#ff5a2a', 'stroke-width': 7, opacity: 0.16, 'stroke-dasharray': `${dash * 0.55} ${dash * 0.45}`, class: 'hl-ember' }),
+        svgEl('circle', {
+          cx: x, cy: y, r, fill: 'none', stroke: '#ff7a3c', 'stroke-width': 2.4, 'stroke-linecap': 'round',
+          'stroke-dasharray': `${dash * 0.5} ${dash * 0.5}`, class: 'hl-ember hl-capture-carved',
+        }),
+      );
+    }
+    this.markClickable(o);
+  }
+
+  private markClickable(o: Overlay): void {
+    const clickable = new Set<number>([...o.targets, ...o.capturable]);
+    for (const el of this.el.querySelectorAll<SVGElement>('.hit')) {
+      el.classList.toggle('active', clickable.has(Number(el.getAttribute('data-point'))));
+    }
+  }
+
   setOverlay(o: Overlay): void {
     this.lastOverlay = o;
     clear(this.hlLayer);
+    if (this.render.assets.boardIncludesLines && this.render.assets.board && this.render.level !== 'low') {
+      this.setCarvedOverlay(o);
+      return;
+    }
     const hl = this.theme.highlight;
     if (o.selected !== null) {
       const { x, y } = pointXY(o.selected);

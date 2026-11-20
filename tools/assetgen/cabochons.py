@@ -95,3 +95,18 @@ def extract(sheet_path: Path, out_dir: Path, prefix: str, size: int = 512, **kw)
         cut_circle(img, cx, cy, r, size).save(p)
         paths.append(p)
     return paths
+
+
+def find_single(img: Image.Image, work: int = 512, sat_thresh: int = 60):
+    """(cx, cy, r) in full-res px of the single stone in the frame (largest saturated blob), or None."""
+    scale = work / max(img.size)
+    small = img.convert("RGB").resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
+    mask = _saturation(small).point(lambda v: 255 if v > sat_thresh else 0)
+    mask = mask.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(5)).filter(ImageFilter.MinFilter(3))
+    bbox = mask.getbbox()
+    if not bbox:
+        return None
+    x0, y0, x1, y1 = bbox
+    w, h = x1 - x0, y1 - y0
+    area = sum(1 for v in mask.getdata() if v) if False else None  # noqa
+    return ((x0 + x1) / 2 / scale, (y0 + y1) / 2 / scale, (w + h) / 4 / scale, w / max(1, h))
