@@ -245,6 +245,38 @@ def fmt(n: int) -> str:
     return f"{n / 1024:.0f} KB" if n < 1024 * 1024 else f"{n / 1024 / 1024:.2f} MB"
 
 
+def relight_stone(img: Image.Image) -> Image.Image:
+    """Match the board's light (warm, from the upper left): a gentle brightness ramp across the stone plus a warm cast."""
+    import numpy as np
+
+    a = np.asarray(img, dtype=np.float32) / 255.0
+    h, w = a.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    t = ((xx / w) + (yy / h)) / 2          # 0 upper-left .. 1 lower-right
+    ramp = 1.16 - 0.38 * t
+    rgb = a[..., :3] * ramp[..., None] * np.array([1.04, 0.99, 0.92], np.float32)
+    out = np.concatenate([np.clip(rgb, 0, 1), a[..., 3:4]], axis=-1)
+    return Image.fromarray((out * 255 + 0.5).astype(np.uint8), "RGBA")
+
+
+def make_piece_shadow(path: Path, size: int = 192) -> None:
+    """Soft contact shadow, same box as a stone image; offset to the lower right (light is upper left)."""
+    import numpy as np
+
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    c = size / 2
+    r = size * 0.5 / 1.07 * 0.97          # stone radius within its box (margin 7%)
+    d = np.hypot(xx - (c + size * 0.045), yy - (c + size * 0.075))
+    a = np.clip((r * 1.02 - d) / (size * 0.075) + 0.5, 0, 1)       # soft-edged disc
+    a = a * 0.75
+    img = np.zeros((size, size, 4), np.uint8)
+    img[..., 3] = (a * 255).astype(np.uint8)
+    im = Image.fromarray(img, "RGBA")
+    from PIL import ImageFilter
+    im = im.filter(ImageFilter.GaussianBlur(size * 0.03))
+    im.save(path, "WEBP", quality=90, alpha_quality=100, method=6)
+
+
 def export_pieces(theme: str, a: dict, out_dir: Path) -> None:
     """Variants chosen in assets-src/<theme>/pieces/final/<prefix>_<k>.png -> piece_<prefix>_<k>.{ultra,high}.webp"""
     prefix = a["piece"]
@@ -252,8 +284,10 @@ def export_pieces(theme: str, a: dict, out_dir: Path) -> None:
     if not finals:
         say(f"- {prefix}: no pieces/final/{prefix}_*.png, skipped")
         return
+    make_piece_shadow(out_dir / "piece_shadow.webp")
+    say(f"- {(out_dir / 'piece_shadow.webp').relative_to(ROOT)}  192x192")
     for f in finals:
-        img = Image.open(f)
+        img = relight_stone(Image.open(f).convert("RGBA"))
         for level, size in (("ultra", 256), ("high", 128)):
             path = out_dir / f"piece_{f.stem}.{level}.webp"
             img.resize((size, size), Image.LANCZOS).save(path, "WEBP", quality=92, alpha_quality=100, method=6)
@@ -272,6 +306,60 @@ def cmd_compose(args) -> None:
     say(f"wrote {out.relative_to(ROOT)} ({args.size}px); depth map beside it")
 
 
+REALISM_PROMPT = ("top-down photo of a carved black granite game board, fine gold flecks, chiselled V-grooves with rough grey stone "
+                  "inside, carved round cup holes, warm golden hour side light from the upper left, photoreal, sharp focus")
+REALISM_NEGATIVE = ("text, letters, numbers, watermark, logo, pieces, stones, balls, objects, extra lines, extra holes, people, hands, "
+                    "cartoon, illustration, blurry, low quality, table, wood, border, frame outside")
+
+
+def cmd_realism(args) -> None:
+    """img2img realism pass at 1024, then verify that the carved geometry did not move."""
+    import geomcheck
+
+    spec = load_spec(args.spec or args.theme)
+    root = SRC / args.theme
+    comp = root / "board_composite.png"
+    out_dir = root / "realism"
+    out_dir.mkdir(exist_ok=True)
+    small = Image.open(comp).convert("RGB").resize((1024, 1024), Image.LANCZOS)
+    inp = out_dir / "input_1024.png"
+    small.save(inp)
+    c = Comfy(args.url)
+    name = c.upload_image(str(inp), "assetgen_realism_in.png")
+    results = {}
+    for d in [float(x) for x in args.denoise.split(",")]:
+        say(f"img2img denoise={d} seed={args.seed}")
+        wf = workflows.img2img(model=spec["models"]["main"], uploaded_name=name, prompt=args.prompt or REALISM_PROMPT,
+                               negative=REALISM_NEGATIVE, seed=args.seed, steps=30, cfg=args.cfg, sampler="dpmpp_2m",
+                               scheduler="karras", denoise=d)
+        outs = c.run(wf, timeout=args.timeout)
+        path = out_dir / f"d{int(round(d * 100)):03d}.png"
+        path.write_bytes(dict(outs)["save"])
+        res = geomcheck.check(comp, path, comp.with_name(comp.stem + "_cavity.png"))
+        results[f"{d:.2f}"] = res
+        say(json.dumps(res, indent=1))
+    (out_dir / "geomcheck.json").write_text(json.dumps(results, indent=2))
+
+
+def cmd_realism_finish(args) -> None:
+    """Upscale the accepted realism result to 2048 (RealESRGAN if installed) and blend procedural detail back in."""
+    root = SRC / args.theme
+    acc = Image.open(root / "realism" / f"{args.name}.png").convert("RGB")
+    try:
+        c: Comfy | None = Comfy(args.url)
+    except ComfyError:
+        c = None
+    up = upscale_to(acc, 2048, c, root / "realism").resize((2048, 2048), Image.LANCZOS)
+    comp = Image.open(root / "board_composite.png").convert("RGB")
+    final = Image.blend(up, comp, args.blend) if args.blend > 0 else up
+    if args.gain != 1.0:
+        # exposure lift with a soft shoulder (keeps highlights from clipping)
+        final = final.point(lambda v: int(255 * (1 - 2.718281828 ** (-(v / 255.0) * args.gain * 1.6)) / (1 - 2.718281828 ** (-args.gain * 1.6))))
+    up.save(root / "realism" / "accepted_2048.png")
+    final.save(root / "board_final.png")
+    say(f"wrote {(root / 'board_final.png').relative_to(ROOT)} (realism {args.name}, {1 - args.blend:.0%} diffusion / {args.blend:.0%} procedural)")
+
+
 def cmd_export(args) -> None:
     spec = load_spec(args.spec or args.theme)
     out_dir = PUBLIC / args.theme
@@ -283,7 +371,7 @@ def cmd_export(args) -> None:
             continue
         master = SRC / args.theme / asset_id / "master.png"
         if a["kind"] == "composite":
-            master = SRC / args.theme / "board_composite.png"
+            master = SRC / args.theme / ("board_final.png" if (SRC / args.theme / "board_final.png").exists() else "board_composite.png")
         if not master.exists():
             say(f"- {asset_id}: no master.png, skipped")
             continue
@@ -339,6 +427,16 @@ def main() -> None:
     cp = sub.add_parser("compose", help="render the carved board composite from the game geometry")
     cp.add_argument("theme"); cp.add_argument("--spec"); cp.add_argument("--size", type=int, default=2048)
     cp.set_defaults(fn=cmd_compose)
+
+    rl = sub.add_parser("realism", help="img2img realism pass over the composite + geometry check")
+    rl.add_argument("theme"); rl.add_argument("--spec"); rl.add_argument("--denoise", default="0.25,0.35,0.45")
+    rl.add_argument("--seed", type=int, default=1234); rl.add_argument("--cfg", type=float, default=5.0)
+    rl.add_argument("--prompt"); rl.add_argument("--timeout", type=float, default=900)
+    rl.set_defaults(fn=cmd_realism)
+
+    rf = sub.add_parser("realism-finish", help="upscale the accepted realism pass to 2048 and blend procedural detail back")
+    rf.add_argument("theme"); rf.add_argument("name", help="e.g. d025"); rf.add_argument("--blend", type=float, default=0.35); rf.add_argument("--gain", type=float, default=1.0)
+    rf.set_defaults(fn=cmd_realism_finish)
 
     e = sub.add_parser("export", help="write final WebPs to public/assets/<theme>/")
     e.add_argument("theme"); e.add_argument("--spec")

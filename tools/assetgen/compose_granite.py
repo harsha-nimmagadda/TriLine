@@ -1,21 +1,24 @@
-"""Deterministic compositor for the carved-granite board (Pillow only, no numpy).
+"""Deterministic compositor for the carved-granite board (numpy + Pillow).
 
 Renders the board from the GAME GEOMETRY (24 points, 3 squares, midpoint cross lines - the same
 coordinates as src/engine/board.ts / boardView.ts: a 600x600 SVG viewBox, points at 60/140/220 .. 540)
-so the image aligns exactly with the app's SVG coordinate system. Only the *materials* come from the
-diffusion model (black granite, chiselled beige stone); the carving, lighting and shadows are procedural.
+so the image aligns exactly with the app's SVG coordinate system.
 
-Light comes from the upper left. Surfaces are described by a depth map D (0 = top surface, 255 = deepest):
-V-grooves along every line, round cup holes at the points, and a bevelled frame. Shading is the
-directional derivative of D along the light direction, so the wall facing the light is lit and the
-opposite wall is in shadow.
+What comes from the diffusion model: only the *materials* (low-frequency granite tone, the rough chiselled
+stone texture). Everything else is procedural:
+  * a height field (V-grooves with a crisp lip, spherical cup holes, a bevelled frame channel, a slab chamfer),
+  * normal-based Lambert lighting from one warm low light in the upper left (cast shadow side is dark, lit side
+    catches the light), ambient occlusion, dust,
+  * fine gold/bronze/amber flecks and a few quartz points on near-black stone, a broad warm light gradient and a
+    faint polished sheen.
 """
 from __future__ import annotations
 
 import math
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+import numpy as np
+from PIL import Image, ImageDraw
 
 SIZE_UNITS = 600.0
 CELL = 80.0
@@ -44,195 +47,224 @@ def board_segments() -> list[tuple[tuple[float, float], tuple[float, float]]]:
 
 DEFAULTS = dict(
     size=2048,
-    groove_width=9.0,    # units, at the surface
-    groove_depth=200,
-    cup_radius=20.5,     # units
-    cup_depth=235,
-    cup_darkness=0.7,
-    cup_light_gain=3.2,
-    cup_rim_depth=70,
-    frame_inset=26.0,    # units from the slab edge to the frame centre-line
-    frame_width=15.0,
-    light=(-1.0, -1.0),  # direction TOWARDS the light (upper left)
+    seed=7,
+    groove_width=9.0,      # units at the surface (lip to lip)
+    groove_slope=0.95,     # depth/half-width: steeper = deeper V
+    cup_radius=24.0,       # units
+    cup_depth=40.0,        # px at 2048
+    frame_inset=26.0,      # units from the slab edge to the channel centre-line
+    frame_width=15.0,      # units
+    frame_depth=13.0,      # px
+    chamfer_px=16.0,       # slab edge bevel
+    light=(-0.55, -0.55, 0.62),   # direction TOWARDS the light: upper left, low and warm
+    ambient=0.22,
+    rough=2.6,             # px of chisel roughness inside the carving
+    fleck_density=0.0042,  # gold flecks per px^2 at 2048
+    quartz_density=0.0006,
 )
 
 
-def _scale(size: int) -> float:
-    return size / SIZE_UNITS
+# ---- numpy helpers -------------------------------------------------------------------------------------
+
+def gauss(a: np.ndarray, sigma: float) -> np.ndarray:
+    """Gaussian blur by FFT (wraps at the borders - fine for our masks and noise)."""
+    if sigma <= 0:
+        return a
+    h, w = a.shape
+    fy = np.fft.fftfreq(h)[:, None]
+    fx = np.fft.rfftfreq(w)[None, :]
+    k = np.exp(-2 * (math.pi * sigma) ** 2 * (fx * fx + fy * fy)).astype(np.float32)
+    return np.fft.irfft2(np.fft.rfft2(a) * k, s=a.shape).astype(np.float32)
 
 
-def groove_depth_map(opts: dict) -> tuple[Image.Image, Image.Image, Image.Image, Image.Image]:
-    """Depth map D ('L'): V-grooves, cups, bevelled frame and slab chamfer."""
-    size, s = opts["size"], _scale(opts["size"])
-    d_lines = Image.new("L", (size, size), 0)
-    dr = ImageDraw.Draw(d_lines)
-    steps = 14
-    w0 = opts["groove_width"] * s
-    for i in range(steps):
-        w = max(1, round(w0 * (1 - i / steps)))
-        v = round(opts["groove_depth"] * (i + 1) / steps)
-        for (x1, y1), (x2, y2) in board_segments():
-            dr.line([(x1 * s, y1 * s), (x2 * s, y2 * s)], fill=v, width=w)
-            for (x, y) in ((x1, y1), (x2, y2)):
-                dr.ellipse([x * s - w / 2, y * s - w / 2, x * s + w / 2, y * s + w / 2], fill=v)
-    # cup holes: smooth spherical bowl (steep near the rim) from a radial gradient - avoids the stair-step
-    # artefacts that nested ellipses give in the derivative shading
-    d_cups = Image.new("L", (size, size), 0)
-    r0 = opts["cup_radius"] * s
-    diam = max(8, round(r0 * 2))
-    grad = Image.radial_gradient("L").resize((diam, diam), Image.BICUBIC)  # 0 centre -> 255 at the rim
-    rim = opts["cup_rim_depth"]
-    bowl = grad.point(lambda v: round(rim + (opts["cup_depth"] - rim) * max(0.0, 1 - (v / 255.0) ** 1.5)))
-    circle = Image.new("L", (diam, diam), 0)
-    ImageDraw.Draw(circle).ellipse([0, 0, diam - 1, diam - 1], fill=255)
-    bowl_mask = circle.filter(ImageFilter.GaussianBlur(0.6))
-    for p in range(24):
-        x, y = point_xy(p)
-        box = (round(x * s - diam / 2), round(y * s - diam / 2))
-        patch = d_cups.crop((box[0], box[1], box[0] + diam, box[1] + diam))
-        patch = ImageChops.lighter(patch, ImageChops.multiply(bowl, bowl_mask.point(lambda v: v)).point(lambda v: v) if False else Image.composite(bowl, patch, bowl_mask))
-        d_cups.paste(patch, box)
-    # grooves stop at the cup rim (the cup defines its own interior)
-    cup_area = Image.new("L", (size, size), 0)
-    ca = ImageDraw.Draw(cup_area)
-    for p in range(24):
-        x, y = point_xy(p)
-        ca.ellipse([x * s - r0, y * s - r0, x * s + r0, y * s + r0], fill=255)
-    d_lines = Image.composite(Image.new("L", (size, size), 0), d_lines, cup_area)
-    # frame: bevelled channel with a flat chiselled bottom
-    fw = opts["frame_width"] * s
-    c = opts["frame_inset"] * s
-    fsteps = 12
-    d_frame = Image.new("L", (size, size), 0)
-    df = ImageDraw.Draw(d_frame)
-    for i in range(fsteps):
-        w = fw * (1 - 0.55 * i / fsteps)
-        v = round(opts["groove_depth"] * 0.8 * min(1.0, (i + 1) / (fsteps * 0.55)))
-        outer = c - w / 2
-        inner = c + w / 2
-        df.rectangle([outer, outer, size - outer, size - outer], fill=v)
-        df.rectangle([inner, inner, size - inner, size - inner], fill=0)
-    # slab chamfer at the very edge
-    d_edge = Image.new("L", (size, size), 0)
-    de = ImageDraw.Draw(d_edge)
-    cw = 6 * s
-    for i in range(8):
-        w = cw * (1 - i / 8)
-        v = round(70 * (i + 1) / 8)
-        de.rectangle([0, 0, size - 1, size - 1], outline=v, width=max(1, round(w)))
-    cav = ImageChops.lighter(ImageChops.lighter(d_lines, d_cups), d_frame)
-    d = ImageChops.lighter(cav, d_edge)
-    blur = ImageFilter.GaussianBlur(1.1 * s / 3.4)
-    return d.filter(blur), cav.filter(blur), cup_area.filter(ImageFilter.GaussianBlur(2.0 * s / 3.4)), d_cups.filter(ImageFilter.GaussianBlur(2.6 * s / 3.4))
+def noise(size: int, sigma: float, rng: np.random.Generator) -> np.ndarray:
+    """Band-limited noise, zero mean, unit standard deviation."""
+    n = gauss(rng.standard_normal((size, size)).astype(np.float32), sigma)
+    return (n - n.mean()) / (n.std() + 1e-6)
 
 
-def _clamp_point(v: float) -> int:
-    return max(0, min(255, int(v)))
+def _luma(img: np.ndarray) -> np.ndarray:
+    return (0.299 * img[..., 0] + 0.587 * img[..., 1] + 0.114 * img[..., 2]).astype(np.float32)
 
 
-def shading_maps(d: Image.Image, opts: dict, gain: float = 1.0) -> tuple[Image.Image, Image.Image, Image.Image]:
-    """Returns (lit, shadow, ao) 'L' maps. lit: 0..255 brightening; shadow: 255 = unshaded."""
-    s = _scale(opts["size"])
-    lx, ly = opts["light"]
-    norm = math.hypot(lx, ly)
-    ax, ay = -lx / norm, -ly / norm  # direction away from the light
-    h = max(2, round(3.0 * s / 3.4))
-    # central difference along the light direction, so the effect stays on the carved walls
-    d_minus = ImageChops.offset(d, round(ax * h), round(ay * h))   # D(p - h*a)
-    d_plus = ImageChops.offset(d, -round(ax * h), -round(ay * h))  # D(p + h*a)
-    signed = ImageChops.add(d_minus, ImageOps.invert(d_plus), 2.0, 0)  # 127.5 + (D(p-ha) - D(p+ha))/2
-    lit = signed.point(lambda v: _clamp_point((v - 128) * 7.0 * gain))
-    shadow = signed.point(lambda v: 255 - _clamp_point((128 - v) * 16.0 * gain))
-    # ambient occlusion: deep + narrow regions are darker
-    ao_blur = d.filter(ImageFilter.GaussianBlur(7 * s / 3.4))
-    ao = ao_blur.point(lambda v: 255 - _clamp_point(v * 0.55))
-    return lit, shadow, ao
-
-
-def _grade(img: Image.Image, brightness=1.0, contrast=1.0, color=1.0, tint=(1.0, 1.0, 1.0)) -> Image.Image:
-    img = ImageEnhance.Brightness(img).enhance(brightness)
-    img = ImageEnhance.Contrast(img).enhance(contrast)
-    img = ImageEnhance.Color(img).enhance(color)
-    r, g, b = img.split()
-    r = r.point(lambda v: min(255, int(v * tint[0])))
-    g = g.point(lambda v: min(255, int(v * tint[1])))
-    b = b.point(lambda v: min(255, int(v * tint[2])))
-    return Image.merge("RGB", (r, g, b))
-
-
-def _fit(img: Image.Image, size: int) -> Image.Image:
-    img = img.convert("RGB")
-    s = max(size / img.width, size / img.height)
+def _load(path: Path, size: int) -> np.ndarray:
+    im = Image.open(path).convert("RGB")
+    s = max(size / im.width, size / im.height)
     if s != 1:
-        img = img.resize((max(size, round(img.width * s)), max(size, round(img.height * s))), Image.LANCZOS)
-    x, y = (img.width - size) // 2, (img.height - size) // 2
-    return img.crop((x, y, x + size, y + size))
+        im = im.resize((max(size, round(im.width * s)), max(size, round(im.height * s))), Image.LANCZOS)
+    x, y = (im.width - size) // 2, (im.height - size) // 2
+    return np.asarray(im.crop((x, y, x + size, y + size)), dtype=np.float32) / 255.0
 
 
-def light_gradient(size: int, cx=0.30, cy=0.22) -> Image.Image:
-    """'L' image, bright near (cx, cy) falling off to the lower right."""
-    g = Image.radial_gradient("L").resize((size * 2, size * 2), Image.BICUBIC)  # 0 centre -> 255 edge
-    ox = int(size - cx * size)
-    oy = int(size - cy * size)
-    return ImageOps.invert(g.crop((ox, oy, ox + size, oy + size)))
+# ---- height field --------------------------------------------------------------------------------------
+
+def _seg_dist(X, Y, a, b):
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    t = np.clip(((X - ax) * dx + (Y - ay) * dy) / (dx * dx + dy * dy), 0, 1)
+    return np.hypot(X - (ax + t * dx), Y - (ay + t * dy))
+
+
+def height_fields(o: dict):
+    """Returns dict of float32 arrays (px units, positive = deeper): lines, cups, frame, edge, plus cup_t."""
+    n, s = o["size"], o["size"] / SIZE_UNITS
+    ys, xs = np.mgrid[0:n, 0:n].astype(np.float32)
+    X, Y = xs + 0.5, ys + 0.5
+    # grooves: V profile
+    dist = np.full((n, n), 1e9, np.float32)
+    for a, b in board_segments():
+        dist = np.minimum(dist, _seg_dist(X, Y, (a[0] * s, a[1] * s), (b[0] * s, b[1] * s)))
+    half = o["groove_width"] * s / 2
+    lines = np.clip(half - dist, 0, None) * o["groove_slope"]
+    # cups: shallow spherical hollow with a crisp vertical-ish rim
+    cd = np.full((n, n), 1e9, np.float32)
+    for p in range(24):
+        x, y = point_xy(p)
+        cd = np.minimum(cd, np.hypot(X - x * s, Y - y * s))
+    r0 = o["cup_radius"] * s
+    t = np.clip(cd / r0, 0, 1)
+    cups = np.where(cd < r0, o["cup_depth"] * (1 - t ** 3.2) ** 0.5, 0).astype(np.float32)
+    # grooves stop at the cup rim
+    lines = np.where(cd < r0, 0, lines).astype(np.float32)
+    # frame channel: trapezoid profile (chamfered walls, flat chiselled floor)
+    q = np.maximum(np.abs(X - n / 2), np.abs(Y - n / 2))
+    rf = (SIZE_UNITS / 2 - o["frame_inset"]) * s
+    df = np.abs(q - rf)
+    fw = o["frame_width"] * s / 2
+    chamfer = fw * 0.38
+    frame = np.clip((fw - df) / chamfer, 0, 1) * o["frame_depth"]
+    # slab edge chamfer
+    e = np.minimum(np.minimum(X, Y), np.minimum(n - X, n - Y))
+    edge = np.clip(1 - e / o["chamfer_px"], 0, 1) * 7.0
+    return dict(lines=lines, cups=cups, frame=frame.astype(np.float32), edge=edge.astype(np.float32), cd=cd, r0=r0)
 
 
 def compose(granite_path: Path, chisel_path: Path, out_path: Path, **overrides) -> Path:
-    opts = {**DEFAULTS, **overrides}
-    size = opts["size"]
-    s = _scale(size)
+    o = {**DEFAULTS, **overrides}
+    n, s = o["size"], o["size"] / SIZE_UNITS
+    rng = np.random.default_rng(o["seed"])
+    hf = height_fields(o)
+    carve = np.maximum(np.maximum(hf["lines"], hf["cups"]), hf["frame"])  # cavity depth, px
+    # crisp cavity mask (antialiased by one pixel)
+    cav = np.clip(carve * 1.5, 0, 1).astype(np.float32)
+    cav_edge = np.clip(hf["cd"] / hf["r0"], 0, 1)  # noqa: F841 (kept for debugging)
 
-    d, d_cav, cup_mask, d_cups = groove_depth_map(opts)
-    lit, shadow, ao = shading_maps(d, opts)
-    # bowls are shallow: light them with a stronger response than the narrow grooves
-    lit_c, shadow_c, _ = shading_maps(d_cups, opts, gain=opts['cup_light_gain'])
-    lit = Image.composite(lit_c, lit, cup_mask)
-    shadow = Image.composite(shadow_c, shadow, cup_mask)
-    cavity = d_cav.point(lambda v: min(255, v * 6)).filter(ImageFilter.GaussianBlur(0.8))
+    # ---- chisel material -----------------------------------------------------------------------------
+    chisel = _load(chisel_path, n)
+    cl = _luma(chisel)
+    cl_hp = cl - gauss(cl, 6 * s / 3.4)  # tool marks / grain
+    cl_hp = cl_hp / (cl_hp.std() + 1e-6)
+    # roughness only exists inside the carving; lips stay crisp
+    depth = np.maximum(carve, hf["edge"]) + cav * o["rough"] * cl_hp * 0.55 + gauss(cav, 1.0) * cav * 0
+    depth = gauss(depth.astype(np.float32), 0.7)
 
-    # ---- materials ---------------------------------------------------------------------------
-    base = _fit(Image.open(granite_path), size)
-    base = _grade(base, brightness=0.8, contrast=1.1, color=1.05, tint=(1.04, 1.0, 0.94))
-    chisel = _fit(Image.open(chisel_path), size)
-    chisel = _grade(chisel, brightness=0.6, contrast=1.6, color=0.9, tint=(1.0, 0.97, 0.92))
+    # ---- normals + lighting --------------------------------------------------------------------------
+    gy, gx = np.gradient(-depth)
+    nz = 1.0 / np.sqrt(1 + gx * gx + gy * gy)
+    nx, ny = -gx * nz, -gy * nz
+    L = np.array(o["light"], np.float32)
+    L = L / np.linalg.norm(L)
+    lam = nx * L[0] + ny * L[1] + nz * L[2]
+    rel = np.clip(lam / L[2], 0, 3)  # 1.0 on flat stone, >1 lit walls, ~0 shadowed walls
 
-    # chisel stone is lit/shaded by the carving; the granite surface only gets a faint bevel response
-    def shade(img: Image.Image, lit_gain: float, shadow_amt: float) -> Image.Image:
-        sh = ImageChops.multiply(img, shadow.point(lambda v: int(255 - (255 - v) * shadow_amt)).convert('RGB'))
-        brighten = ImageChops.multiply(img, lit.point(lambda v: int(v * lit_gain)).convert('RGB'))
-        return ImageChops.add(sh, brighten)
+    # ambient occlusion: deep narrow places are darker
+    ao = 1.0 - np.clip(gauss(carve, 9 * s / 3.4) / 9.0, 0, 0.62)
+    ao *= 1.0 - np.clip(gauss(carve, 22 * s / 3.4) / 16.0, 0, 0.25)
 
-    chisel_lit = shade(chisel, 1.1, 1.0)
-    chisel_lit = ImageChops.multiply(chisel_lit, ao.convert('RGB'))
-    # cup interiors read as shaded hollows: darker stone, the lit crescent comes from the shading
-    cup_dark = chisel_lit.point(lambda v: int(v * opts['cup_darkness']))
-    chisel_lit = Image.composite(cup_dark, chisel_lit, cup_mask)
-    base_lit = shade(base, 0.55, 0.9)
+    # ---- albedo of the carved stone: muted grey-beige ---------------------------------------------------
+    gray = np.repeat(cl[..., None], 3, axis=2)
+    alb = 0.45 * chisel + 0.55 * gray
+    alb = (alb - 0.5) * 1.35 + 0.5
+    alb = np.clip(alb * np.array([0.78, 0.74, 0.68], np.float32), 0, 1)  # darker, muted, slightly warm
+    amb = o["ambient"]
+    cav_light = amb + (1 - amb) * np.clip(rel, 0, 2.1)
+    cupness = np.clip(1 - hf['cd'] / (hf['r0'] * 1.02), 0, 1)
+    cup_shade = 1 - 0.28 * np.clip(cupness * 3, 0, 1)   # the hollows sit in a bit more shade
+    carved = alb * (cav_light * ao * cup_shade)[..., None]
+    # thin catch-light on faces turned towards the light
+    spec = np.clip(rel - 1.12, 0, 1) ** 1.3 * 0.8
+    carved = carved + spec[..., None] * np.array([0.9, 0.78, 0.55], np.float32)
+    # soft dust collected in the low places and along the lit lip
+    dust_n = np.clip(noise(n, 1.1 * s / 3.4, rng) * 0.5 + 0.35, 0, 1)
+    low = np.clip(gauss(carve, 4 * s / 3.4) / 10.0, 0, 1)
+    dust = (dust_n * low * 0.30)[..., None] * np.array([0.78, 0.68, 0.52], np.float32)
+    carved = np.clip(carved + dust * ao[..., None], 0, 1)
 
-    img = Image.composite(chisel_lit, base_lit, cavity)
+    # ---- polished granite surface --------------------------------------------------------------------
+    tex = _load(granite_path, n)
+    tl = gauss(_luma(tex), 14 * s / 3.4)
+    tl = (tl - tl.min()) / (tl.max() - tl.min() + 1e-6)
+    tone = 0.7 + 0.7 * tl                      # slow tone variation from the generated texture
+    green = np.clip(noise(n, 60 * s / 3.4, rng) * 0.5, -1, 1)   # some areas deeper black-green
+    base = np.empty((n, n, 3), np.float32)
+    base[..., 0] = 0.060 * tone * (1 - 0.18 * np.clip(green, 0, 1))
+    base[..., 1] = 0.062 * tone * (1 + 0.05 * green)
+    base[..., 2] = 0.068 * tone * (1 + 0.08 * np.clip(green, 0, 1))
+    grain = noise(n, 0.8, rng) * 0.10 + noise(n, 2.2 * s / 3.4, rng) * 0.10
+    base *= (1 + grain)[..., None]
+    surf = base * (1 - cav)[..., None]
 
-    # ---- dust along the groove edges + inside ---------------------------------------------------------
-    halo = cavity.filter(ImageFilter.GaussianBlur(6 * s / 3.4))
-    halo = ImageChops.subtract(halo, cavity.filter(ImageFilter.GaussianBlur(1.5)))
-    grain = chisel.convert("L").filter(ImageFilter.GaussianBlur(0.6)).point(lambda v: _clamp_point((v - 90) * 2.2))
-    dust_a = ImageChops.multiply(halo.point(lambda v: int(v * 0.55)), grain)
-    dust = Image.new("RGB", (size, size), (176, 160, 134))
-    img = Image.composite(dust, img, dust_a)
+    # fine flecks (gold / bronze / amber) and a few quartz points
+    fl = _flecks(n, s, o, rng)
+    surf = surf * (1 - fl[..., 3:4]) + fl[..., :3] * fl[..., 3:4]
 
-    # ---- global look: warm side light, soft sheen, vignette ---------------------------------------------
-    grad = light_gradient(size)
-    warm = Image.merge("RGB", (
-        grad.point(lambda v: int(150 + v * 0.40)),
-        grad.point(lambda v: int(130 + v * 0.36)),
-        grad.point(lambda v: int(104 + v * 0.30)),
-    ))
-    img = ImageChops.multiply(img, warm).point(lambda v: min(255, int(v * 1.55)))
-    sheen = light_gradient(size, 0.2, 0.15).point(lambda v: int(max(0, v - 120) * 0.5))
-    img = ImageChops.add(img, Image.merge("RGB", (sheen, sheen.point(lambda v: int(v * 0.92)), sheen.point(lambda v: int(v * 0.8)))))
+    img = surf * (1 - cav)[..., None] + carved * cav[..., None]
+    # chamfer / lips: lit & shaded by the same normals (surface response, weak)
+    edge_light = (np.clip(rel, 0, 2) - 1.0) * (1 - cav)
+    img = img + (edge_light * 0.20)[..., None] * np.array([1.0, 0.85, 0.62], np.float32) * (hf["edge"] > 0.2)[..., None]
+
+    # ---- global look: warm low light, broad gradient, polished sheen, far-corner falloff ------------------
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32) / n
+    d = np.hypot(xx - 0.12, yy - 0.08) / 1.25
+    grad = np.clip(2.45 - 1.95 * d, 0.5, 2.5)
+    warm = np.stack([np.clip(1.05 - 0.08 * d, 0, 2), np.clip(0.97 - 0.02 * d, 0, 2), np.clip(0.84 + 0.14 * d, 0, 2)], axis=-1)
+    img = img * (grad[..., None] * warm)
+    sheen = np.exp(-(((xx - 0.20) / 0.30) ** 2 + ((yy - 0.16) / 0.20) ** 2)) * 0.085
+    sheen += np.exp(-(((xx - 0.55 - 0.3 * (yy - 0.5)) / 0.05) ** 2)) * 0.012  # faint diagonal reflection band
+    img = img + (sheen * (1 - cav))[..., None] * np.array([1.0, 0.86, 0.66], np.float32)
+
+    img = np.clip(img, 0, 1)
+    img = img ** (1 / 1.08)  # lift the mids slightly
+    out = Image.fromarray((img * 255 + 0.5).astype(np.uint8))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(out_path)
-    d.save(out_path.with_name(out_path.stem + "_depth.png"))
+    out.save(out_path)
+    # companions used by the realism-pass geometry check
+    Image.fromarray((np.clip(carve / carve.max(), 0, 1) * 255).astype(np.uint8)).save(out_path.with_name(out_path.stem + "_depth.png"))
+    Image.fromarray((cav * 255).astype(np.uint8)).save(out_path.with_name(out_path.stem + "_cavity.png"))
     return out_path
+
+
+def _flecks(n: int, s: float, o: dict, rng: np.random.Generator) -> np.ndarray:
+    """RGBA float layer of fine mineral flecks (drawn 2x supersampled)."""
+    ss = 2
+    layer = Image.new("RGBA", (n * ss, n * ss), (0, 0, 0, 0))
+    dr = ImageDraw.Draw(layer)
+    palette = np.array([[212, 160, 66], [186, 126, 52], [232, 168, 48], [160, 112, 60], [205, 175, 110]], np.float32)
+    count = int(n * n * o["fleck_density"])
+    xs = rng.uniform(0, n, count)
+    ys = rng.uniform(0, n, count)
+    rad = (0.55 + rng.exponential(0.55, count)).clip(0.55, 3.0) * s / 3.4 * 1.15
+    shade = rng.uniform(0.35, 1.25, count)
+    which = rng.integers(0, len(palette), count)
+    sparkle = rng.random(count) < 0.07
+    for i in range(count):
+        c = palette[which[i]] * shade[i] * (1.5 if sparkle[i] else 1.0)
+        col = tuple(int(min(255, v)) for v in c) + (255,)
+        r = rad[i] * ss
+        k = rng.integers(3, 6)
+        ang = rng.uniform(0, math.tau)
+        pts = [(xs[i] * ss + r * (0.6 + 0.5 * rng.random()) * math.cos(ang + j * math.tau / k),
+                ys[i] * ss + r * (0.6 + 0.5 * rng.random()) * math.sin(ang + j * math.tau / k)) for j in range(k)]
+        dr.polygon(pts, fill=col)
+    for _ in range(int(n * n * o["quartz_density"])):
+        x, y = rng.uniform(0, n * ss, 2)
+        r = rng.uniform(0.5, 1.1) * ss * s / 3.4
+        v = int(rng.uniform(200, 255))
+        dr.ellipse([x - r, y - r, x + r, y + r], fill=(v, v, min(255, v - 6), 255))
+    layer = layer.resize((n, n), Image.LANCZOS)
+    a = np.asarray(layer, dtype=np.float32) / 255.0
+    return a
 
 
 if __name__ == "__main__":
