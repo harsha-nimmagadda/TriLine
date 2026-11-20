@@ -203,8 +203,11 @@ export class BoardView {
     const variants = this.render.assets.pieceVariants?.[player] ?? [];
     const raster = variants.length > 0 ? variants[this.variantIndex(player, point, animateIn, variants.length)] : this.render.assets.pieces[player];
     if (raster) {
-      const half = PIECE_R * (this.render.assets.boardIncludesLines ? 1.1 : 1.22);
-      if (this.render.level === 'ultra') {
+      // Carved boards: the stone sits a little inside its cup so the carved rim shows around it.
+      const half = PIECE_R * (this.render.assets.boardIncludesLines ? 0.97 : 1.22);
+      if (this.render.assets.pieceShadow) {
+        body.append(svgEl('image', { href: this.render.assets.pieceShadow, x: -half, y: -half, width: half * 2, height: half * 2 }));
+      } else if (this.render.level === 'ultra') {
         body.append(svgEl('ellipse', { cx: 1.5, cy: PIECE_R * 0.45, rx: PIECE_R * 0.95, ry: PIECE_R * 0.5, fill: '#000', opacity: 0.4, filter: 'url(#q-shadow)' }));
       }
       body.append(svgEl('image', { href: raster, x: -half, y: -half, width: half * 2, height: half * 2 }));

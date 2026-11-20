@@ -41,6 +41,7 @@ export const granite: Theme = {
   assets: {
     board: { high: 'assets/granite/board.high.webp', ultra: 'assets/granite/board.ultra.webp' },
     boardIncludesLines: true,
+    pieceShadow: 'assets/granite/piece_shadow.webp',
     background: { high: 'assets/granite/table.high.webp', ultra: 'assets/granite/table.ultra.webp' },
     pieces: [
       {

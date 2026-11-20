@@ -52,6 +52,8 @@ export interface ThemeAssets {
   background?: ImageSet;
   /** Piece images with transparency, [player 1, player 2]. */
   pieces?: [ImageSet | undefined, ImageSet | undefined];
+  /** Baked soft contact shadow drawn under each piece image (same box as the stone image). */
+  pieceShadow?: string;
 }
 
 export interface StrokeLayer {
