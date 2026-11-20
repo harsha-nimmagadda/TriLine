@@ -1,6 +1,6 @@
 import './style.css';
 import { App } from './ui/screens';
-import { DEFAULT_THEME, applyTheme } from './ui/themes';
+import { installThemeDefs } from './ui/themes';
 
-applyTheme(DEFAULT_THEME);
+installThemeDefs();
 new App(document.getElementById('app') as HTMLElement);

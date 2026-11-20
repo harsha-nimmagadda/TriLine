@@ -6,7 +6,9 @@ export const MAX_CHAT_LENGTH = 300;
 export type Message =
   | { t: 'hello'; v: number; name?: string }
   /** Host -> guest: pieces, colours and the full state (initial, rematch, or on reconnect). */
-  | { t: 'config'; pieces: 9 | 11; hostColor: 0 | 1; state: GameState; n: number }
+  | { t: 'config'; pieces: 9 | 11; hostColor: 0 | 1; state: GameState; n: number; theme?: string }
+  /** Host -> guest: the host changed theme mid-game (the host's theme is used by both players). */
+  | { t: 'theme'; id: string }
   | { t: 'action'; action: Action; n: number }
   | { t: 'sync-request' }
   | { t: 'state-sync'; state: GameState; n: number }
@@ -23,6 +25,11 @@ export type Message =
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 const isPoint = (x: unknown): x is number => Number.isInteger(x) && (x as number) >= 0 && (x as number) < 24;
 const isCount = (x: unknown, max: number): x is number => Number.isInteger(x) && (x as number) >= 0 && (x as number) <= max;
+
+/** Theme ids are short lowercase slugs; anything else is dropped (and unknown ids are ignored by the UI). */
+export function parseThemeId(x: unknown): string | undefined {
+  return typeof x === 'string' && /^[a-z0-9-]{1,32}$/.test(x) ? x : undefined;
+}
 
 export function parseAction(x: unknown): Action | null {
   if (!isObj(x)) return null;
@@ -95,12 +102,16 @@ export function parseMessage(raw: unknown): Message | null {
       if (raw.t === 'state-sync') return { t: 'state-sync', state, n: raw.n };
       if ((raw.pieces !== 9 && raw.pieces !== 11) || (raw.hostColor !== 0 && raw.hostColor !== 1)) return null;
       if (state.piecesPerPlayer !== raw.pieces) return null;
-      return { t: 'config', pieces: raw.pieces, hostColor: raw.hostColor, state, n: raw.n };
+      return { t: 'config', pieces: raw.pieces, hostColor: raw.hostColor, state, n: raw.n, theme: parseThemeId(raw.theme) };
     }
     case 'action': {
       const action = parseAction(raw.action);
       if (!action || !isCount(raw.n, 100_000)) return null;
       return { t: 'action', action, n: raw.n };
+    }
+    case 'theme': {
+      const id = parseThemeId(raw.id);
+      return id ? { t: 'theme', id } : null;
     }
     case 'chat':
       if (typeof raw.text !== 'string') return null;

@@ -29,8 +29,8 @@ export interface ControllerDeps {
   ai?: AIClient;
   /** Online mode. */
   session?: OnlineSession;
-  /** Display names of the two sides: [player 1, player 2]. */
-  sideNames: readonly [string, string];
+  /** Display names of the two sides: [player 1, player 2] (read live: the theme can change). */
+  sideNames(): readonly [string, string];
   onGameOver(state: GameState, humanWon: boolean | null): void;
   /** Called when a previously shown game-over overlay should go away (undo / rematch). */
   onGameResumed(): void;
@@ -87,7 +87,7 @@ export class GameController {
   }
 
   labels(): [PlayerLabel, PlayerLabel] {
-    const sides = this.deps.sideNames;
+    const sides = this.deps.sideNames();
     if (this.config.mode === 'local') {
       return [
         { name: 'Player 1', side: sides[0] },
@@ -395,7 +395,7 @@ export class GameController {
           ? 'Draw agreed'
           : 'Draw: same position three times';
     }
-    if (this.config.mode === 'local') return `${this.deps.sideNames[r.winner]} win!`;
+    if (this.config.mode === 'local') return `${this.deps.sideNames()[r.winner]} win!`;
     if (r.winner === this.human) return 'You win!';
     return this.isAI ? 'Computer wins' : 'Opponent wins';
   }
@@ -413,7 +413,7 @@ export class GameController {
     const local = this.config.mode === 'local';
     const youLost = !local && loser === this.human;
     const other = this.isAI ? 'The computer' : 'Your opponent';
-    const name = local ? `${this.deps.sideNames[loser]} have` : youLost ? 'You have' : `${other} has`;
+    const name = local ? `${this.deps.sideNames()[loser]} have` : youLost ? 'You have' : `${other} has`;
     switch (r.reason) {
       case 'pieces':
         return `${name} fewer than 3 pieces left.`;

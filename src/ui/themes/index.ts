@@ -1,18 +1,14 @@
 import { clear, svgEl, svgFragment } from '../dom';
-import { traditional } from './traditional';
+import { THEMES } from './registry';
 import type { Theme } from './theme';
 
 export type { Theme };
+export { REQUIRED_CSS_VARS } from './theme';
+export { DEFAULT_THEME, THEMES, getTheme, resolveThemeId } from './registry';
+export { THEME_STORAGE_KEY, ThemeManager } from './manager';
 
-export const THEMES: Record<string, Theme> = { [traditional.id]: traditional };
-export const DEFAULT_THEME = traditional;
-
-/** Apply CSS variables and install shared SVG <defs> (gradients/filters) for the theme. */
-export function applyTheme(theme: Theme): void {
-  const root = document.documentElement;
-  for (const [k, v] of Object.entries(theme.cssVars)) root.style.setProperty(k, v);
-  root.dataset.theme = theme.id;
-
+/** Install every theme's SVG defs once (previews of other themes need them too). */
+export function installThemeDefs(): void {
   let holder = document.getElementById('theme-defs') as SVGSVGElement | null;
   if (!holder) {
     holder = svgEl('svg', {
@@ -26,6 +22,15 @@ export function applyTheme(theme: Theme): void {
   }
   clear(holder);
   const defs = svgEl('defs');
-  for (const n of svgFragment(theme.defs)) defs.append(n);
+  for (const t of THEMES) for (const n of svgFragment(t.defs)) defs.append(n);
   holder.append(defs);
+}
+
+/** Apply the theme's CSS variables to the page. */
+export function applyTheme(theme: Theme): void {
+  const root = document.documentElement;
+  for (const [k, v] of Object.entries(theme.cssVars)) root.style.setProperty(k, v);
+  root.dataset.theme = theme.id;
+  root.style.colorScheme = theme.scheme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme.cssVars['--theme-color']);
 }

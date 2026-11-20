@@ -8,7 +8,10 @@ import { segmented } from './widgets';
 import { Hud } from './hud';
 import { openRules } from './rules';
 import { SoundManager } from './sound';
-import { DEFAULT_THEME, Theme } from './themes';
+import { ThemeManager, Theme, applyTheme } from './themes';
+import { menuDialog } from './dialog';
+import { openThemePicker } from './themePicker';
+import { readStore, writeStore } from './storage';
 import { OnlineFlow } from './online';
 
 const DIFF_LABEL: Record<Difficulty, { text: string; sub: string }> = {
@@ -24,17 +27,36 @@ export class App {
   private main: HTMLElement;
   private muteBtn: HTMLButtonElement;
   private sound = new SoundManager();
-  private theme: Theme = DEFAULT_THEME;
+  readonly themes = new ThemeManager({ get: readStore, set: writeStore });
   private cleanup: (() => void) | null = null;
+  /** Re-renders the current non-game screen when the theme changes (null on game screens). */
+  private rerender: (() => void) | null = null;
   private lastConfig: GameConfig = { ...DEFAULT_CONFIG };
-  private online = new OnlineFlow({
-    swap: (n, c) => this.swap(n, c),
-    home: () => this.showHome(),
-    sound: this.sound,
-    theme: this.theme,
-  });
+  private online: OnlineFlow;
+
+  private get theme(): Theme {
+    return this.themes.current;
+  }
 
   constructor(root: HTMLElement) {
+    const app = this;
+    this.online = new OnlineFlow({
+      swap: (n, c) => this.swap(n, c),
+      home: () => this.showHome(),
+      sound: this.sound,
+      themes: this.themes,
+      get theme(): Theme {
+        return app.themes.current;
+      },
+    });
+    applyTheme(this.themes.current);
+    this.themes.onChange((t) => {
+      const el = document.documentElement;
+      el.classList.add('theme-switching');
+      applyTheme(t);
+      window.setTimeout(() => el.classList.remove('theme-switching'), 450);
+      this.rerender?.();
+    });
     this.muteBtn = h('button', {
       class: 'icon-btn',
       attrs: { 'aria-label': 'Toggle sound' },
@@ -54,6 +76,7 @@ export class App {
         h(
           'div',
           { class: 'topbar-actions' },
+          h('button', { class: 'icon-btn', text: '🎨', attrs: { 'aria-label': 'Choose theme', title: 'Theme' }, on: { click: () => openThemePicker(this.themes) } }),
           h('button', { class: 'icon-btn', text: '?', attrs: { 'aria-label': 'How to play' }, on: { click: () => openRules() } }),
           this.muteBtn,
         ),
@@ -73,6 +96,7 @@ export class App {
   private swap(node: HTMLElement, cleanup?: () => void): void {
     this.cleanup?.();
     this.cleanup = cleanup ?? null;
+    this.rerender = null;
     clear(this.main);
     this.main.append(node);
   }
@@ -80,9 +104,10 @@ export class App {
   // ---- home ----------------------------------------------------------------------------
 
   showHome(): void {
+    const render = () => this.showHome();
     const emblem = svgEl('svg', { viewBox: '0 0 120 120', class: 'emblem', 'aria-hidden': 'true' });
     for (const n of svgFragment(`
-      <g fill="none" stroke="#f6f0e0" stroke-width="3" stroke-linecap="round">
+      <g fill="none" stroke="${this.theme.lines.stroke}" stroke-width="3" stroke-linecap="round">
         <rect x="10" y="10" width="100" height="100"/><rect x="34" y="34" width="52" height="52" transform="translate(0 0)"/>
         <rect x="22" y="22" width="76" height="76"/>
         <path d="M60 10V22M60 98V110M10 60H22M98 60H110M60 22V34M60 86V98M22 60H34M86 60H98"/>
@@ -106,16 +131,18 @@ export class App {
         h('button', { class: 'btn primary big', text: 'Play vs Computer', on: { click: () => this.showSetup('ai') } }),
         h('button', { class: 'btn big', text: 'Two players on this device', on: { click: () => this.showSetup('local') } }),
         h('button', { class: 'btn big', text: 'Play online', on: { click: () => this.online.showMenu() } }),
+        h('button', { class: 'btn big ghost', text: 'Theme: ' + this.theme.name, on: { click: () => openThemePicker(this.themes) } }),
         h('button', { class: 'btn big ghost', text: 'How to play', on: { click: () => openRules() } }),
       ),
     );
     this.swap(screen);
+    this.rerender = render;
   }
 
   // ---- setup ---------------------------------------------------------------------------
 
-  showSetup(mode: 'ai' | 'local'): void {
-    const cfg: GameConfig = { ...this.lastConfig, mode };
+  showSetup(mode: 'ai' | 'local', existing?: GameConfig): void {
+    const cfg: GameConfig = existing ?? { ...this.lastConfig, mode };
 
     const fields: HTMLElement[] = [
       segmented<number>(
@@ -162,21 +189,27 @@ export class App {
       ),
     );
     this.swap(screen);
+    this.rerender = () => this.showSetup(mode, cfg);
   }
 
   // ---- game ----------------------------------------------------------------------------
 
   startGame(config: GameConfig): void {
     this.lastConfig = { ...config };
-    const theme = this.theme;
+    const themes = this.themes;
     let controller: GameController;
     const ai = new AIClient();
-    const board = new BoardView(theme, (p) => controller.handleTap(p));
+    const board = new BoardView(themes.current, (p) => controller.handleTap(p));
     const overlayHost = h('div', { class: 'overlay-host' });
-    const hud = new Hud(theme, {
+    const hud = new Hud(themes.current, {
       onUndo: () => controller.undo(),
       onRules: () => openRules(),
-      onMenu: () => this.showHome(),
+      onMenu: () =>
+        void menuDialog('Menu', [
+          { label: 'Change theme', onClick: () => openThemePicker(themes) },
+          { label: 'How to play', onClick: () => openRules() },
+          { label: 'Back to home', danger: true, onClick: () => this.showHome() },
+        ]),
     });
 
     const hideOverlay = () => clear(overlayHost);
@@ -205,7 +238,7 @@ export class App {
       hud,
       sound: this.sound,
       ai,
-      sideNames: theme.sideNames,
+      sideNames: () => themes.current.sideNames,
       onGameOver: (_s, humanWon) => showOver(humanWon),
       onGameResumed: hideOverlay,
     });
@@ -218,7 +251,13 @@ export class App {
       hud.bottom,
       overlayHost,
     );
+    const offTheme = themes.onChange((t) => {
+      board.setTheme(t);
+      hud.setTheme(t);
+      controller.refresh();
+    });
     this.swap(screen, () => {
+      offTheme();
       controller.dispose();
       ai.dispose();
       board.destroy();

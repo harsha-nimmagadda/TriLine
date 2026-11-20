@@ -26,6 +26,8 @@ export interface SessionEvents {
   /** Rematch / draw-offer flags changed. */
   flags: () => void;
   error: (text: string) => void;
+  /** The host's theme id changed (guest side) - apply it. */
+  theme: (id: string) => void;
 }
 
 export interface SessionOptions {
@@ -35,6 +37,8 @@ export interface SessionOptions {
   /** Host only: the host's colour (0 = light, moves first). */
   hostColor?: Player;
   name?: string;
+  /** Host only: id of the host's theme, shared with the guest. */
+  themeId?: string;
   reconnectMs?: number;
   now?: () => number;
 }
@@ -59,6 +63,8 @@ export class OnlineSession {
   drawOfferedByThem = false;
   rematchMine = false;
   rematchTheirs = false;
+  /** The host's theme id (host: own choice; guest: as announced by the host). */
+  themeId: string | null;
   /** Guest: has received the host's config at least once. */
   configured: boolean;
 
@@ -78,6 +84,7 @@ export class OnlineSession {
     this.hostColor = opts.role === 'host' ? (opts.hostColor ?? 0) : null;
     this.state = createInitialState(this.pieces);
     this.configured = opts.role === 'host';
+    this.themeId = opts.role === 'host' ? (opts.themeId ?? null) : null;
     this.now = opts.now ?? Date.now;
     this.reconnectMs = opts.reconnectMs ?? RECONNECT_WINDOW_MS;
     this.name = opts.name;
@@ -246,9 +253,17 @@ export class OnlineSession {
         this.state = msg.state;
         this.moveCount = msg.n;
         this.configured = true;
+        if (msg.theme) this.themeId = msg.theme;
         if (msg.n === 0) this.resetFlags();
         this.markConnected();
         this.emit('state', this.state);
+        if (msg.theme) this.emit('theme', msg.theme);
+        return;
+      case 'theme':
+        if (this.role === 'guest') {
+          this.themeId = msg.id;
+          this.emit('theme', msg.id);
+        }
         return;
       case 'state-sync':
         if (this.role !== 'guest') return;
@@ -335,7 +350,14 @@ export class OnlineSession {
 
   private sendConfig(): void {
     if (this.hostColor === null) return;
-    this.send({ t: 'config', pieces: this.pieces, hostColor: this.hostColor, state: this.state, n: this.moveCount });
+    this.send({
+      t: 'config',
+      pieces: this.pieces,
+      hostColor: this.hostColor,
+      state: this.state,
+      n: this.moveCount,
+      ...(this.themeId ? { theme: this.themeId } : {}),
+    });
   }
 
   private agreeDraw(iSentOffer: boolean): void {
@@ -377,6 +399,13 @@ export class OnlineSession {
     this.send({ t: 'action', action, n });
     this.emit('action', action, prev, this.state, true);
     return true;
+  }
+
+  /** Host: change the shared theme and tell the guest. */
+  setTheme(id: string): void {
+    if (this.role !== 'host' || this.themeId === id) return;
+    this.themeId = id;
+    this.send({ t: 'theme', id });
   }
 
   sendChat(text: string): boolean {

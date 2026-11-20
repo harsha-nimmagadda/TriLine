@@ -1,5 +1,5 @@
 import { GameState, Player, opponent } from '../engine/state';
-import { h, svgEl, svgFragment } from './dom';
+import { clear, h, svgEl, svgFragment } from './dom';
 import type { Theme } from './themes/theme';
 
 export interface PlayerLabel {
@@ -42,6 +42,7 @@ export class Hud {
   readonly top: HTMLElement;
   readonly bottom: HTMLElement;
   private cards: [Card, Card];
+  private icons: SVGSVGElement[] = [];
   private status: HTMLElement;
   private undoBtn: HTMLButtonElement;
   private resignBtn: HTMLButtonElement | null = null;
@@ -51,7 +52,7 @@ export class Hud {
   constructor(theme: Theme, cb: HudCallbacks) {
     const mk = (p: Player): Card => {
       const icon = svgEl('svg', { viewBox: '-26 -22 52 44', class: 'card-icon', 'aria-hidden': 'true' });
-      for (const n of svgFragment(theme.piece(p, 17))) icon.append(n);
+      this.icons[p] = icon;
       const name = h('div', { class: 'card-name' });
       const side = h('div', { class: 'card-side' });
       const hand = h('span', { class: 'stat-val', text: '0' });
@@ -71,6 +72,7 @@ export class Hud {
       return { root, name, side, hand, captured };
     };
     this.cards = [mk(0), mk(1)];
+    this.setTheme(theme);
     this.status = h('div', { class: 'status', attrs: { role: 'status', 'aria-live': 'polite' } });
     this.top = h('div', { class: 'hud-top' }, h('div', { class: 'cards' }, this.cards[0].root, this.cards[1].root), this.status);
 
@@ -88,6 +90,14 @@ export class Hud {
       this.chatBadge = h('span', { class: 'badge-count', attrs: { hidden: '' }, text: '0' });
       const chatBtn = h('button', { class: 'btn chat-toggle', on: { click: () => cb.onChat?.() } }, 'Chat ', this.chatBadge);
       this.bottom.prepend(this.resignBtn, this.drawBtn, chatBtn);
+    }
+  }
+
+  /** Redraw the piece icons in the player cards for a new theme. */
+  setTheme(theme: Theme): void {
+    for (const p of [0, 1] as const) {
+      clear(this.icons[p]);
+      for (const n of svgFragment(theme.piece(p, 17))) this.icons[p].append(n);
     }
   }
 

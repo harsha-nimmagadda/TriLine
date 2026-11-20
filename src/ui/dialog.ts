@@ -41,3 +41,41 @@ export function confirmDialog(opts: DialogOptions): Promise<boolean> {
 export function closeDialogs(): void {
   document.querySelectorAll('.dialog-backdrop').forEach((e) => e.remove());
 }
+
+export interface MenuItem {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}
+
+/** Simple modal list of actions. Closes itself when an item is chosen. */
+export function menuDialog(title: string, items: MenuItem[], closeLabel = 'Resume'): void {
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') close();
+  };
+  const list = h('div', { class: 'menu menu-list' });
+  for (const it of items) {
+    list.append(
+      h('button', {
+        class: `btn big${it.danger ? ' danger' : ''}`,
+        text: it.label,
+        on: {
+          click: () => {
+            close();
+            it.onClick();
+          },
+        },
+      }),
+    );
+  }
+  list.append(h('button', { class: 'btn big ghost', text: closeLabel, on: { click: close } }));
+  const panel = h('div', { class: 'modal small', attrs: { role: 'dialog', 'aria-modal': 'true', 'aria-label': title } }, h('h2', { text: title }), list);
+  const backdrop = h('div', { class: 'backdrop dialog-backdrop', on: { click: (e) => { if (e.target === backdrop) close(); } } }, panel);
+  document.body.append(backdrop);
+  document.addEventListener('keydown', onKey);
+  (list.firstElementChild as HTMLElement | null)?.focus();
+}

@@ -33,6 +33,10 @@ export class BoardView {
   private timers = new Set<number>();
   private interactive = true;
 
+  private lastState: GameState | null = null;
+  private lastOverlay: Overlay = NO_OVERLAY;
+  private lastMovable: readonly number[] = [];
+
   constructor(
     private theme: Theme,
     private onTap: (point: number) => void,
@@ -43,39 +47,73 @@ export class BoardView {
       role: 'img',
       'aria-label': 'Pedda Dhadi board',
     });
-    for (const n of svgFragment(theme.floor)) this.el.append(n);
-    this.el.append(this.buildLines());
-    this.glowLayer = svgEl('g', { class: 'glow-layer' });
-    this.hlLayer = svgEl('g', { class: 'hl-layer' });
     this.pieceLayer = svgEl('g', { class: 'piece-layer' });
+    this.hlLayer = svgEl('g', { class: 'hl-layer' });
+    this.glowLayer = svgEl('g', { class: 'glow-layer' });
+    this.build();
+  }
+
+  /** (Re)draw the themed board furniture: floor, lines, layers and tap targets. */
+  private build(): void {
+    clear(this.el);
+    for (const n of svgFragment(this.theme.floor)) this.el.append(n);
+    this.el.append(this.buildLines());
     this.el.append(this.glowLayer, this.hlLayer, this.pieceLayer, this.buildHits());
+  }
+
+  /** Switch theme in place, keeping pieces and highlights. */
+  setTheme(theme: Theme, animate = true): void {
+    if (theme === this.theme) return;
+    this.theme = theme;
+    clear(this.pieceLayer);
+    clear(this.glowLayer);
+    this.pieces.clear();
+    this.build();
+    if (this.lastState) this.sync(this.lastState);
+    this.setOverlay(this.lastOverlay);
+    this.setMovable(this.lastMovable);
+    if (animate && typeof this.el.animate === 'function') this.el.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: 320, easing: 'ease-out' });
   }
 
   private buildLines(): SVGGElement {
     const t = this.theme.lines;
     const g = svgEl('g', { class: 'lines' });
-    const strokes = svgEl('g', {
-      fill: 'none',
-      stroke: t.stroke,
-      'stroke-width': t.width,
-      'stroke-linecap': 'round',
-      'stroke-linejoin': 'round',
-      ...(t.filter ? { filter: t.filter } : {}),
-    });
-    for (let ring = 0; ring < 3; ring++) {
-      const a = pointXY(ring * 8);
-      const c = pointXY(ring * 8 + 4);
-      strokes.append(svgEl('rect', { x: a.x, y: a.y, width: c.x - a.x, height: c.y - a.y }));
+    const geometry = (attrs: Record<string, string | number>): SVGGElement => {
+      const strokes = svgEl('g', { fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', ...attrs });
+      for (let ring = 0; ring < 3; ring++) {
+        const a = pointXY(ring * 8);
+        const c = pointXY(ring * 8 + 4);
+        strokes.append(svgEl('rect', { x: a.x, y: a.y, width: c.x - a.x, height: c.y - a.y }));
+      }
+      for (const pos of [1, 3, 5, 7]) {
+        const a = pointXY(pos);
+        const b = pointXY(16 + pos);
+        strokes.append(svgEl('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y }));
+      }
+      return strokes;
+    };
+    for (const layer of t.layers ?? []) {
+      const lg = geometry({
+        stroke: layer.stroke,
+        'stroke-width': layer.width,
+        ...(layer.opacity !== undefined ? { opacity: layer.opacity } : {}),
+        ...(layer.filter ? { filter: layer.filter } : {}),
+      });
+      if (layer.dx || layer.dy) lg.setAttribute('transform', `translate(${layer.dx ?? 0} ${layer.dy ?? 0})`);
+      g.append(lg);
     }
-    for (const pos of [1, 3, 5, 7]) {
-      const a = pointXY(pos);
-      const b = pointXY(16 + pos);
-      strokes.append(svgEl('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y }));
-    }
-    g.append(strokes);
+    g.append(geometry({ stroke: t.stroke, 'stroke-width': t.width, ...(t.filter ? { filter: t.filter } : {}) }));
     for (let i = 0; i < NUM_POINTS; i++) {
       const { x, y } = pointXY(i);
-      g.append(svgEl('circle', { cx: x, cy: y, r: t.pointRadius, fill: t.pointFill, opacity: 0.95 }));
+      g.append(
+        svgEl('circle', {
+          cx: x,
+          cy: y,
+          r: t.pointRadius,
+          fill: t.pointFill,
+          ...(t.pointStroke ? { stroke: t.pointStroke, 'stroke-width': t.pointStrokeWidth ?? 1 } : {}),
+        }),
+      );
     }
     return g;
   }
@@ -122,6 +160,7 @@ export class BoardView {
 
   /** Make the DOM match `state` exactly, without animation. */
   sync(state: GameState): void {
+    this.lastState = state;
     for (let i = 0; i < NUM_POINTS; i++) {
       const want = state.board[i];
       const el = this.pieces.get(i);
@@ -200,6 +239,7 @@ export class BoardView {
   }
 
   setOverlay(o: Overlay): void {
+    this.lastOverlay = o;
     clear(this.hlLayer);
     const hl = this.theme.highlight;
     if (o.selected !== null) {
@@ -239,6 +279,7 @@ export class BoardView {
 
   /** Mark the pieces that can currently be picked up (own pieces with a free neighbour). */
   setMovable(points: readonly number[]): void {
+    this.lastMovable = points;
     const set = new Set(points);
     for (const [p, el] of this.pieces) el.classList.toggle('movable', set.has(p));
   }

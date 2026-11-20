@@ -31,6 +31,14 @@ Five levels (default: Kids):
 
 `npm run ai-ladder` plays adjacent levels against each other (time caps scaled down: hard 50 ms, expert 150 ms per move).
 
+## Themes
+
+Six themes change the whole app (board, pieces, page, buttons, chat, dialogs, highlights): **Traditional** (default), **Granite**,
+**Wooden**, **Modern**, **Rangoli** and **Night**. Pick one with the palette button in the top bar, the Theme button on the home
+screen, or the in-game Menu; the choice is saved in your browser. In an online game both players see the host's theme (the
+guest's own choice returns when they leave). Previews: `docs/themes/*.png`. To add a theme, create a file in `src/ui/themes/`
+(see `theme.ts` for the interface), add it to `registry.ts`; the tests check it defines every token and meets contrast rules.
+
 ## How to play
 
 - The board has 24 points on three nested squares. Lines join the squares only through the middle of each side.

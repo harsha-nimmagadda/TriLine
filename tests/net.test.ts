@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInitialState, applyAction } from '../src/engine';
 import { generateCode, normalizeCode, codeFromHash, shareLink, peerIdFor } from '../src/net/roomCode';
-import { parseMessage, parseState } from '../src/net/protocol';
+import { parseMessage, parseState, PROTOCOL_VERSION } from '../src/net/protocol';
 import { OnlineSession } from '../src/net/session';
 import { createMemoryPair } from '../src/net/transport';
 
@@ -63,6 +63,68 @@ describe('protocol validation', () => {
     expect(parseState({ ...s, board: [] })).toBeNull();
     expect(parseState({ ...s, phase: 'gameover' })).toBeNull(); // gameover needs a result
     expect(parseState({ ...s, turn: 2 })).toBeNull();
+  });
+});
+
+describe('theme sync', () => {
+  it('config carries the host theme, with the field optional and validated', () => {
+    const s = createInitialState(9);
+    const cfg = { t: 'config', pieces: 9, hostColor: 0, state: s, n: 0 };
+    const withTheme = parseMessage({ ...cfg, theme: 'wooden' });
+    expect(withTheme && withTheme.t === 'config' && withTheme.theme).toBe('wooden');
+    const without = parseMessage(cfg);
+    expect(without && without.t === 'config' && without.theme).toBeUndefined();
+    const bad = parseMessage({ ...cfg, theme: '<script>' });
+    expect(bad && bad.t === 'config' && bad.theme).toBeUndefined();
+    expect(parseMessage({ t: 'theme', id: 'night' })).toEqual({ t: 'theme', id: 'night' });
+    expect(parseMessage({ t: 'theme', id: 'No Way!' })).toBeNull();
+    expect(PROTOCOL_VERSION).toBe(1); // optional field: no version bump needed
+  });
+
+  it('guest receives the host theme on connect and on mid-game changes', async () => {
+    const host = new OnlineSession({ role: 'host', themeId: 'wooden' });
+    const guest = new OnlineSession({ role: 'guest' });
+    const seen: string[] = [];
+    guest.on('theme', (id) => seen.push(id));
+    const [a, b] = createMemoryPair();
+    host.attachTransport(a);
+    guest.attachTransport(b);
+    await flush();
+    expect(guest.themeId).toBe('wooden');
+    expect(seen).toEqual(['wooden']);
+    host.setTheme('night');
+    await flush();
+    expect(guest.themeId).toBe('night');
+    expect(seen).toEqual(['wooden', 'night']);
+    guest.setTheme('modern'); // guests cannot change the shared theme
+    await flush();
+    expect(host.themeId).toBe('night');
+    expect(guest.themeId).toBe('night');
+  });
+
+  it('a reconnecting guest gets the current host theme again', async () => {
+    const host = new OnlineSession({ role: 'host', themeId: 'granite' });
+    const guest = new OnlineSession({ role: 'guest' });
+    const [a, b] = createMemoryPair();
+    host.attachTransport(a);
+    guest.attachTransport(b);
+    await flush();
+    host.setTheme('rangoli');
+    await flush();
+    a.close();
+    await flush();
+    const [a2, b2] = createMemoryPair();
+    const seen: string[] = [];
+    guest.on('theme', (id) => seen.push(id));
+    host.attachTransport(a2);
+    guest.attachTransport(b2);
+    await flush();
+    expect(seen).toEqual(['rangoli']);
+  });
+
+  it('host without a theme sends none and the guest keeps its own', async () => {
+    const { guest } = await connect();
+    expect(guest.themeId).toBeNull();
   });
 });
 

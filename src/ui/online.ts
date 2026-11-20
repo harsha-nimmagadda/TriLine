@@ -7,19 +7,23 @@ import { CODE_LENGTH, codeFromHash, normalizeCode, shareLink } from '../net/room
 import { VoiceChat } from '../net/voice';
 import { BoardView } from './boardView';
 import { ChatPanel } from './chat';
-import { closeDialogs, confirmDialog } from './dialog';
+import { closeDialogs, confirmDialog, menuDialog } from './dialog';
 import { clear, h } from './dom';
 import { Hud } from './hud';
 import { openRules } from './rules';
 import type { SoundManager } from './sound';
 import type { Theme } from './themes/theme';
+import type { ThemeManager } from './themes';
+import { openThemePicker } from './themePicker';
 import { segmented } from './widgets';
 
 export interface FlowHost {
   swap(node: HTMLElement, cleanup?: () => void): void;
   home(): void;
   sound: SoundManager;
-  theme: Theme;
+  /** The effective theme (live getter). */
+  readonly theme: Theme;
+  themes: ThemeManager;
 }
 
 const JOIN_TIMEOUT_MS = 12_000;
@@ -148,7 +152,9 @@ export class OnlineFlow {
   // ---- host ------------------------------------------------------------------------------
 
   private async hostGame(pieces: 9 | 11, color: 0 | 1): Promise<void> {
-    const session = new OnlineSession({ role: 'host', pieces, hostColor: color });
+    const session = new OnlineSession({ role: 'host', pieces, hostColor: color, themeId: this.host.themes.preference.id });
+    const offTheme = this.host.themes.onChange(() => session.setTheme(this.host.themes.preference.id));
+    session.on('status', (st) => st === 'closed' && offTheme());
     let room: HostRoom | null = null;
     let started = false;
     let cancelled = false;
@@ -282,14 +288,16 @@ export class OnlineFlow {
   // ---- game ------------------------------------------------------------------------------
 
   private startGame(session: OnlineSession, endpoint: PeerEndpoint, teardown: () => void): void {
-    const theme = this.host.theme;
+    const themes = this.host.themes;
+    // The host's theme is used by both players: a guest follows it and gets its own back on leaving.
+    if (session.role === 'guest' && session.themeId) themes.setOverride(session.themeId);
     const sound = this.host.sound;
     let controller!: GameController;
     let voice!: VoiceChat;
     const overlayHost = h('div', { class: 'overlay-host' });
     let overShown = false;
 
-    const board = new BoardView(theme, (p) => controller.handleTap(p));
+    const board = new BoardView(themes.current, (p) => controller.handleTap(p));
 
     const panel: ChatPanel = new ChatPanel({
       onSend: (t) => session.sendChat(t.slice(0, MAX_CHAT_LENGTH)),
@@ -322,10 +330,14 @@ export class OnlineFlow {
       }
     };
 
-    const hud: Hud = new Hud(theme, {
+    const hud: Hud = new Hud(themes.current, {
       onUndo: () => undefined,
       onRules: () => openRules(),
-      onMenu: () => void leave(),
+      onMenu: () =>
+        void menuDialog('Menu', [
+          { label: session.role === 'host' ? 'Change theme' : 'Theme', onClick: () => openThemePicker(themes) },
+          { label: 'Leave game', danger: true, onClick: () => void leave() },
+        ]),
       onResign: async () => {
         const ok = await confirmDialog({ title: 'Resign this game?', text: 'Your opponent will win.', ok: 'Resign', cancel: 'Keep playing', danger: true });
         if (ok) session.resign();
@@ -394,7 +406,7 @@ export class OnlineFlow {
         hud,
         sound,
         session,
-        sideNames: theme.sideNames,
+        sideNames: () => themes.current.sideNames,
         onGameOver: () => {
           closeDialogs();
           overShown = true;
@@ -419,6 +431,7 @@ export class OnlineFlow {
           cancel: 'Not now',
         }).then((ok) => (ok ? accept() : decline()));
       },
+      stats: (st) => panel.setVoiceStats(st),
       message: (t) => {
         panel.setVoiceNote(t);
         panel.addMessage('system', t);
@@ -433,6 +446,14 @@ export class OnlineFlow {
     };
     chip();
     const unsubs = [
+      themes.onChange((t) => {
+        board.setTheme(t);
+        hud.setTheme(t);
+        controller.refresh();
+        renderOver();
+        if (session.role === 'host') session.setTheme(themes.preference.id);
+      }),
+      session.on('theme', (id) => themes.setOverride(id)),
       session.on('chat', (t) => {
         panel.addMessage('them', t);
         sound.play('place');
@@ -463,6 +484,7 @@ export class OnlineFlow {
     window.addEventListener('pagehide', onHide);
     this.host.swap(screen, () => {
       window.removeEventListener('pagehide', onHide);
+      if (session.role === 'guest') themes.setOverride(null);
       for (const u of unsubs) u();
       closeDialogs();
       controller.dispose();
@@ -471,7 +493,7 @@ export class OnlineFlow {
       teardown();
       board.destroy();
     });
-    panel.addMessage('system', `You are playing ${theme.sideNames[session.myColor ?? 0]}.`);
+    panel.addMessage('system', `You are playing ${themes.current.sideNames[session.myColor ?? 0]}.`);
     controller.start();
   }
 }

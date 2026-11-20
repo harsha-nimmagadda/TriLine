@@ -30,6 +30,7 @@ export class ChatPanel {
   private voiceBtn: HTMLButtonElement | null = null;
   private muteBtn: HTMLButtonElement | null = null;
   private voiceNote: HTMLElement | null = null;
+  private voiceLatency: HTMLElement | null = null;
   private unread = 0;
   private open = false;
 
@@ -80,7 +81,9 @@ export class ChatPanel {
         this.voiceBtn.disabled = true;
         this.voiceBtn.title = 'Voice needs microphone support (and a secure page)';
       }
-      parts.push(h('div', { class: 'voice-bar' }, this.voiceBtn, this.muteBtn), this.voiceNote);
+      this.voiceLatency = h('div', { class: 'voice-latency', attrs: { hidden: '', 'aria-live': 'off', title: 'Estimated one-way voice delay' } });
+      this.voiceLatency.style.cssText = 'padding:4px 12px 0;font-size:.8rem;font-variant-numeric:tabular-nums';
+      parts.push(h('div', { class: 'voice-bar' }, this.voiceBtn, this.muteBtn), this.voiceLatency, this.voiceNote);
     }
     parts.push(this.log, form);
     this.el = h('aside', { class: 'chat', attrs: { 'aria-label': 'Chat' } }, ...parts);
@@ -146,6 +149,20 @@ export class ChatPanel {
       this.unread++;
       this.opts.onUnreadChange(this.unread);
     }
+  }
+
+  /** Latency readout, e.g. "~85 ms"; pass null to hide. */
+  setVoiceStats(stats: { latencyMs: number | null; relayed: boolean } | null): void {
+    const el = this.voiceLatency;
+    if (!el) return;
+    if (!stats) {
+      el.hidden = true;
+      return;
+    }
+    const ms = stats.latencyMs;
+    el.hidden = false;
+    el.textContent = (ms === null ? 'Voice delay: measuring…' : `Voice delay ~${Math.round(ms)} ms`) + (stats.relayed ? ' · relayed (slower)' : '');
+    el.style.color = ms === null ? '' : ms < 150 ? 'var(--good)' : ms < 300 ? 'var(--accent)' : 'var(--danger)';
   }
 
   /** Short note under the voice buttons (errors, hints). */
