@@ -92,8 +92,8 @@
       "piece": "p2",
       "width": 1024,
       "height": 1024,
-      "prompt": "a single polished lapis lazuli, round polished cabochon centred in the frame filling about 70% of the image, top-down view, flat dome, studio product photo, plain flat matte neutral grey background, soft key light from the upper left with one small clean specular highlight at the upper left of the stone, no cast shadow, sharp focus, deep royal blue with fine gold pyrite flecks and veins",
-      "negative_extra": "multiple stones, hands, ring, jewelry setting, text, shadow, reflection of objects, dark background, oval, square, white spots"
+      "prompt": "a single polished lapis lazuli, round polished cabochon centred in the frame filling about 70% of the image, top-down view, flat dome, studio product photo, plain flat matte neutral grey background, soft key light from the upper left with one small clean specular highlight at the upper left of the stone, no cast shadow, sharp focus, deep royal blue with thin fine gold pyrite veins and tiny specks only, no large gold patches",
+      "negative_extra": "multiple stones, hands, ring, jewelry setting, text, shadow, reflection of objects, dark background, oval, square, white spots, large gold patches, blotches, continents, globe, gold starburst"
     }
   }
 }
