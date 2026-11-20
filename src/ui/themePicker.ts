@@ -1,5 +1,6 @@
 import { GameState, createInitialState } from '../engine/state';
 import { BoardView } from './boardView';
+import { openModal } from './dialog';
 import { h } from './dom';
 import { THEMES, Theme, ThemeManager } from './themes';
 
@@ -24,15 +25,6 @@ function buildPreview(theme: Theme): HTMLElement {
 /** Modal grid of live theme previews. Selecting applies the theme immediately. */
 export function openThemePicker(manager: ThemeManager): () => void {
   let off: () => void = () => undefined;
-  const close = () => {
-    off();
-    backdrop.remove();
-    document.removeEventListener('keydown', onKey);
-  };
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') close();
-  };
-
   const grid = h('div', { class: 'theme-grid', attrs: { role: 'group', 'aria-label': 'Themes' } });
   const note = h('p', { class: 'note theme-note' });
   const buttons = new Map<string, HTMLButtonElement>();
@@ -63,17 +55,13 @@ export function openThemePicker(manager: ThemeManager): () => void {
   refresh();
   off = manager.onChange(refresh);
 
-  const panel = h(
-    'div',
-    { class: 'modal wide', attrs: { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Choose a theme' } },
-    h('h2', { text: 'Choose a theme' }),
-    note,
-    grid,
-    h('button', { class: 'btn primary', text: 'Done', on: { click: close } }),
-  );
-  const backdrop = h('div', { class: 'backdrop', on: { click: (e) => { if (e.target === backdrop) close(); } } }, panel);
-  document.body.append(backdrop);
-  document.addEventListener('keydown', onKey);
-  (grid.querySelector('.on') as HTMLElement | null)?.focus();
-  return close;
+  const m = openModal({
+    title: 'Choose a theme',
+    variant: 'wide',
+    body: [note, grid],
+    footer: [h('button', { class: 'btn primary', text: 'Done', attrs: { type: 'button' }, on: { click: () => m.close() } })],
+    onClose: () => off(),
+    initialFocus: () => (grid.querySelector('.on') as HTMLElement | null) ?? grid.querySelector('button'),
+  });
+  return () => m.close();
 }

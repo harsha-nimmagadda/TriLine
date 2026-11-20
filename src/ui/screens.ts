@@ -9,7 +9,7 @@ import { Hud } from './hud';
 import { openRules } from './rules';
 import { SoundManager } from './sound';
 import { ThemeManager, Theme, applyTheme } from './themes';
-import { menuDialog } from './dialog';
+import { ModalHandle, menuDialog, openModal } from './dialog';
 import { openThemePicker } from './themePicker';
 import { readStore, writeStore } from './storage';
 import { OnlineFlow } from './online';
@@ -200,7 +200,7 @@ export class App {
     let controller: GameController;
     const ai = new AIClient();
     const board = new BoardView(themes.current, (p) => controller.handleTap(p));
-    const overlayHost = h('div', { class: 'overlay-host' });
+    let overModal: ModalHandle | null = null;
     const hud = new Hud(themes.current, {
       onUndo: () => controller.undo(),
       onRules: () => openRules(),
@@ -212,25 +212,25 @@ export class App {
         ]),
     });
 
-    const hideOverlay = () => clear(overlayHost);
+    const hideOverlay = () => overModal?.close();
     const showOver = (humanWon: boolean | null) => {
       const kind = humanWon === null ? 'draw' : humanWon ? 'win' : 'lose';
-      const card = h(
-        'div',
-        { class: `modal over ${kind}`, attrs: { role: 'dialog', 'aria-modal': 'true' } },
-        h('h2', { text: controller.resultText() }),
-        h('p', { text: controller.resultDetail() }),
-        h(
-          'div',
-          { class: 'menu' },
-          h('button', { class: 'btn primary big', text: 'Play again', on: { click: () => this.startGame(config) } }),
-          h('button', { class: 'btn big', text: 'Home', on: { click: () => this.showHome() } }),
-          h('button', { class: 'btn big ghost', text: 'View board', on: { click: hideOverlay } }),
-        ),
-      );
-      clear(overlayHost);
-      overlayHost.append(h('div', { class: 'backdrop' }, card));
-      (card.querySelector('.primary') as HTMLElement | null)?.focus();
+      overModal?.close();
+      const again = h('button', { class: 'btn primary', text: 'Play again', attrs: { type: 'button' }, on: { click: () => this.startGame(config) } });
+      overModal = openModal({
+        title: controller.resultText(),
+        body: [h('p', { text: controller.resultDetail() })],
+        footer: [
+          again,
+          h('button', { class: 'btn', text: 'Home', attrs: { type: 'button' }, on: { click: () => this.showHome() } }),
+          h('button', { class: 'btn ghost', text: 'View board', attrs: { type: 'button' }, on: { click: hideOverlay } }),
+        ],
+        variant: `over ${kind}`,
+        initialFocus: () => again,
+        onClose: () => {
+          overModal = null;
+        },
+      });
     };
 
     controller = new GameController(config, {
@@ -249,7 +249,6 @@ export class App {
       hud.top,
       h('div', { class: 'board-wrap' }, board.el),
       hud.bottom,
-      overlayHost,
     );
     const offTheme = themes.onChange((t) => {
       board.setTheme(t);
@@ -258,6 +257,7 @@ export class App {
     });
     this.swap(screen, () => {
       offTheme();
+      overModal?.close();
       controller.dispose();
       ai.dispose();
       board.destroy();

@@ -7,8 +7,8 @@ import { CODE_LENGTH, codeFromHash, normalizeCode, shareLink } from '../net/room
 import { VoiceChat } from '../net/voice';
 import { BoardView } from './boardView';
 import { ChatPanel } from './chat';
-import { closeDialogs, confirmDialog, menuDialog } from './dialog';
-import { clear, h } from './dom';
+import { ModalHandle, closeDialogs, confirmDialog, menuDialog, openModal } from './dialog';
+import { h } from './dom';
 import { Hud } from './hud';
 import { openRules } from './rules';
 import type { SoundManager } from './sound';
@@ -294,7 +294,7 @@ export class OnlineFlow {
     const sound = this.host.sound;
     let controller!: GameController;
     let voice!: VoiceChat;
-    const overlayHost = h('div', { class: 'overlay-host' });
+    let overModal: ModalHandle | null = null;
     let overShown = false;
 
     const board = new BoardView(themes.current, (p) => controller.handleTap(p));
@@ -370,33 +370,32 @@ export class OnlineFlow {
         label = 'Accept rematch';
         note = 'Your opponent wants a rematch!';
       }
-      const rematch = h('button', { class: 'btn primary big', text: label, on: { click: () => session.requestRematch() } });
+      const rematch = h('button', { class: 'btn primary', text: label, attrs: { type: 'button' }, on: { click: () => session.requestRematch() } });
       rematch.disabled = disabled;
-      const card = h(
-        'div',
-        { class: `modal over ${kind}`, attrs: { role: 'dialog', 'aria-modal': 'true' } },
-        h('h2', { text: controller.resultText() }),
-        h('p', { text: controller.resultDetail() }),
-        note ? h('p', { class: 'note', text: note }) : null,
-        h(
-          'div',
-          { class: 'menu' },
-          rematch,
-          h('button', { class: 'btn big', text: 'Home', on: { click: () => this.host.home() } }),
-          h('button', {
-            class: 'btn big ghost',
-            text: 'View board',
-            on: {
-              click: () => {
-                overShown = false;
-                clear(overlayHost);
-              },
-            },
-          }),
-        ),
-      );
-      clear(overlayHost);
-      overlayHost.append(h('div', { class: 'backdrop' }, card));
+      const body = [h('p', { text: controller.resultDetail() }), note ? h('p', { class: 'note', text: note }) : null];
+      const footer = [
+        rematch,
+        h('button', { class: 'btn', text: 'Home', attrs: { type: 'button' }, on: { click: () => this.host.home() } }),
+        h('button', { class: 'btn ghost', text: 'View board', attrs: { type: 'button' }, on: { click: () => overModal?.close() } }),
+      ];
+      if (overModal && !overModal.closed) {
+        overModal.setTitle(controller.resultText());
+        overModal.setBody(body);
+        overModal.setFooter(footer);
+        overModal.el.className = `modal over ${kind}`;
+        return;
+      }
+      overModal = openModal({
+        title: controller.resultText(),
+        body,
+        footer,
+        variant: `over ${kind}`,
+        initialFocus: () => (rematch.disabled ? null : rematch),
+        onClose: () => {
+          overShown = false;
+          overModal = null;
+        },
+      });
     };
 
     controller = new GameController(
@@ -414,7 +413,7 @@ export class OnlineFlow {
         },
         onGameResumed: () => {
           overShown = false;
-          clear(overlayHost);
+          overModal?.close();
         },
         onOnlineChange: renderOver,
       },
@@ -477,7 +476,6 @@ export class OnlineFlow {
       { class: 'screen game online' },
       h('div', { class: 'game-main' }, hud.top, h('div', { class: 'board-wrap' }, board.el), hud.bottom),
       panel.el,
-      overlayHost,
     );
     // Closing the tab: tell the peer right away instead of waiting for ICE to time out.
     const onHide = () => session.close();
@@ -487,6 +485,8 @@ export class OnlineFlow {
       if (session.role === 'guest') themes.setOverride(null);
       for (const u of unsubs) u();
       closeDialogs();
+      overModal?.close();
+      panel.destroy();
       controller.dispose();
       voice.dispose();
       session.close();
