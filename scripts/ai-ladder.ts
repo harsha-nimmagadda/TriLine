@@ -5,7 +5,6 @@
 import { chooseAction, Difficulty } from '../src/ai';
 import { Action, GameState, Player, applyAction, createInitialState, legalActions } from '../src/engine';
 
-declare const process: { argv: string[] };
 
 type Mover = (s: GameState, rng: () => number) => Action;
 

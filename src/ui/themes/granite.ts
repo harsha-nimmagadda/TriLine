@@ -36,6 +36,16 @@ export const granite: Theme = {
     '--emblem-bg': 'linear-gradient(135deg, #8a8882, #5f5d59)',
     '--theme-color': '#2d3036',
   },
+  // PLACEHOLDER raster assets (SDXL-Turbo drafts); to be replaced by full-quality generations.
+  assets: {
+    board: { high: 'assets/granite/board.high.webp', ultra: 'assets/granite/board.ultra.webp' },
+    boardTile: 300,
+    background: { high: 'assets/granite/background.high.webp', ultra: 'assets/granite/background.ultra.webp' },
+    pieces: [
+      { high: 'assets/granite/piece_p1.high.webp', ultra: 'assets/granite/piece_p1.ultra.webp' },
+      { high: 'assets/granite/piece_p2.high.webp', ultra: 'assets/granite/piece_p2.ultra.webp' },
+    ],
+  },
   defs: `
     <linearGradient id="gr-base" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#99968f"/>

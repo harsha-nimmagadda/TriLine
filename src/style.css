@@ -1,7 +1,7 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
-  background: radial-gradient(ellipse at 50% 0%, var(--bg-2), var(--bg) 70%) fixed;
+  background: var(--page-bg, radial-gradient(ellipse at 50% 0%, var(--bg-2), var(--bg) 70%) fixed);
   background-color: var(--bg);
   color: var(--text);
   font-family: var(--font);
@@ -288,3 +288,16 @@ html.modal-open, html.modal-open body { overflow: hidden; overscroll-behavior: n
 .theme-name { font-weight: 700; }
 .theme-sides { font-size: .75rem; color: var(--text-dim); line-height: 1.2; }
 .theme-note[hidden] { display: none; }
+
+/* ---- display quality ---- */
+/* Low: no animation, no CSS filters or shadows (SVG filters are stripped in the markup). */
+[data-quality='low'] *, [data-quality='low'] *::before, [data-quality='low'] *::after { animation: none !important; transition: none !important; }
+[data-quality='low'] .board-wrap { filter: none; }
+[data-quality='low'] .piece.captured { display: none; }
+[data-quality='low'] .mill-glow { opacity: .85; }
+[data-quality='low'] .modal, [data-quality='low'] .chat, [data-quality='low'] .new-msgs { box-shadow: none; }
+[data-quality='low'] body { background: var(--bg); }
+/* Ultra: gentle ambient motion on the active player card. */
+@keyframes card-breathe { 0%, 100% { box-shadow: 0 0 10px var(--accent-glow); } 50% { box-shadow: 0 0 22px var(--accent-glow); } }
+[data-quality='ultra'] .card.active { animation: card-breathe 3.6s ease-in-out infinite; }
+.quality-seg { grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); }

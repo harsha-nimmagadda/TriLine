@@ -14,6 +14,9 @@ import { openRules } from './rules';
 import type { SoundManager } from './sound';
 import type { Theme } from './themes/theme';
 import type { ThemeManager } from './themes';
+import type { DisplayManager } from './display';
+import type { QualityManager } from './quality';
+import { openDisplaySettings } from './displaySettings';
 import { openThemePicker } from './themePicker';
 import { segmented } from './widgets';
 
@@ -24,6 +27,8 @@ export interface FlowHost {
   /** The effective theme (live getter). */
   readonly theme: Theme;
   themes: ThemeManager;
+  display: DisplayManager;
+  quality: QualityManager;
 }
 
 const JOIN_TIMEOUT_MS = 12_000;
@@ -289,6 +294,7 @@ export class OnlineFlow {
 
   private startGame(session: OnlineSession, endpoint: PeerEndpoint, teardown: () => void): void {
     const themes = this.host.themes;
+    const display = this.host.display;
     // The host's theme is used by both players: a guest follows it and gets its own back on leaving.
     if (session.role === 'guest' && session.themeId) themes.setOverride(session.themeId);
     const sound = this.host.sound;
@@ -297,7 +303,7 @@ export class OnlineFlow {
     let overModal: ModalHandle | null = null;
     let overShown = false;
 
-    const board = new BoardView(themes.current, (p) => controller.handleTap(p));
+    const board = new BoardView(display.current.theme, (p) => controller.handleTap(p), display.current);
 
     const panel: ChatPanel = new ChatPanel({
       onSend: (t) => session.sendChat(t.slice(0, MAX_CHAT_LENGTH)),
@@ -330,12 +336,13 @@ export class OnlineFlow {
       }
     };
 
-    const hud: Hud = new Hud(themes.current, {
+    const hud: Hud = new Hud(display.current.theme, {
       onUndo: () => undefined,
       onRules: () => openRules(),
       onMenu: () =>
         void menuDialog('Menu', [
           { label: session.role === 'host' ? 'Change theme' : 'Theme', onClick: () => openThemePicker(themes) },
+          { label: 'Display quality', onClick: () => openDisplaySettings(this.host.quality) },
           { label: 'Leave game', danger: true, onClick: () => void leave() },
         ]),
       onResign: async () => {
@@ -398,6 +405,7 @@ export class OnlineFlow {
       });
     };
 
+    hud.setTheme(display.current.theme, display.current);
     controller = new GameController(
       { ...DEFAULT_CONFIG, mode: 'online', pieces: session.pieces },
       {
@@ -405,7 +413,7 @@ export class OnlineFlow {
         hud,
         sound,
         session,
-        sideNames: () => themes.current.sideNames,
+        sideNames: () => display.current.theme.sideNames,
         onGameOver: () => {
           closeDialogs();
           overShown = true;
@@ -445,11 +453,13 @@ export class OnlineFlow {
     };
     chip();
     const unsubs = [
-      themes.onChange((t) => {
-        board.setTheme(t);
-        hud.setTheme(t);
+      display.onChange((d) => {
+        board.setTheme(d.theme, d);
+        hud.setTheme(d.theme, d);
         controller.refresh();
         renderOver();
+      }),
+      themes.onChange(() => {
         if (session.role === 'host') session.setTheme(themes.preference.id);
       }),
       session.on('theme', (id) => themes.setOverride(id)),
@@ -493,7 +503,7 @@ export class OnlineFlow {
       teardown();
       board.destroy();
     });
-    panel.addMessage('system', `You are playing ${themes.current.sideNames[session.myColor ?? 0]}.`);
+    panel.addMessage('system', `You are playing ${display.current.theme.sideNames[session.myColor ?? 0]}.`);
     controller.start();
   }
 }

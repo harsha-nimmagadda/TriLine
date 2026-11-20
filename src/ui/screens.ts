@@ -9,6 +9,9 @@ import { Hud } from './hud';
 import { openRules } from './rules';
 import { SoundManager } from './sound';
 import { ThemeManager, Theme, applyTheme } from './themes';
+import { DisplayManager, applyDisplayToPage } from './display';
+import { QualityManager, readDevice } from './quality';
+import { openDisplaySettings, qualitySummary } from './displaySettings';
 import { ModalHandle, menuDialog, openModal } from './dialog';
 import { openThemePicker } from './themePicker';
 import { readStore, writeStore } from './storage';
@@ -28,6 +31,8 @@ export class App {
   private muteBtn: HTMLButtonElement;
   private sound = new SoundManager();
   readonly themes = new ThemeManager({ get: readStore, set: writeStore });
+  readonly quality = new QualityManager({ get: readStore, set: writeStore }, readDevice, window.location.search);
+  readonly display = new DisplayManager(this.themes, this.quality);
   private cleanup: (() => void) | null = null;
   /** Re-renders the current non-game screen when the theme changes (null on game screens). */
   private rerender: (() => void) | null = null;
@@ -35,7 +40,7 @@ export class App {
   private online: OnlineFlow;
 
   private get theme(): Theme {
-    return this.themes.current;
+    return this.display.current.theme;
   }
 
   constructor(root: HTMLElement) {
@@ -45,18 +50,24 @@ export class App {
       home: () => this.showHome(),
       sound: this.sound,
       themes: this.themes,
+      display: this.display,
+      quality: this.quality,
       get theme(): Theme {
-        return app.themes.current;
+        return app.display.current.theme;
       },
     });
     applyTheme(this.themes.current);
-    this.themes.onChange((t) => {
+    applyDisplayToPage(this.display.current);
+    // Theme / quality changes are published only after their images have preloaded (no flash).
+    this.display.onChange((d) => {
       const el = document.documentElement;
       el.classList.add('theme-switching');
-      applyTheme(t);
+      applyTheme(d.theme);
+      applyDisplayToPage(d);
       window.setTimeout(() => el.classList.remove('theme-switching'), 450);
       this.rerender?.();
     });
+    void this.display.refresh();
     this.muteBtn = h('button', {
       class: 'icon-btn',
       attrs: { 'aria-label': 'Toggle sound' },
@@ -132,6 +143,7 @@ export class App {
         h('button', { class: 'btn big', text: 'Two players on this device', on: { click: () => this.showSetup('local') } }),
         h('button', { class: 'btn big', text: 'Play online', on: { click: () => this.online.showMenu() } }),
         h('button', { class: 'btn big ghost', text: 'Theme: ' + this.theme.name, on: { click: () => openThemePicker(this.themes) } }),
+        h('button', { class: 'btn big ghost', text: 'Display: ' + qualitySummary(this.quality), on: { click: () => openDisplaySettings(this.quality) } }),
         h('button', { class: 'btn big ghost', text: 'How to play', on: { click: () => openRules() } }),
       ),
     );
@@ -197,16 +209,18 @@ export class App {
   startGame(config: GameConfig): void {
     this.lastConfig = { ...config };
     const themes = this.themes;
+    const display = this.display;
     let controller: GameController;
     const ai = new AIClient();
-    const board = new BoardView(themes.current, (p) => controller.handleTap(p));
+    const board = new BoardView(display.current.theme, (p) => controller.handleTap(p), display.current);
     let overModal: ModalHandle | null = null;
-    const hud = new Hud(themes.current, {
+    const hud = new Hud(display.current.theme, {
       onUndo: () => controller.undo(),
       onRules: () => openRules(),
       onMenu: () =>
         void menuDialog('Menu', [
           { label: 'Change theme', onClick: () => openThemePicker(themes) },
+          { label: 'Display quality', onClick: () => openDisplaySettings(this.quality) },
           { label: 'How to play', onClick: () => openRules() },
           { label: 'Back to home', danger: true, onClick: () => this.showHome() },
         ]),
@@ -238,7 +252,7 @@ export class App {
       hud,
       sound: this.sound,
       ai,
-      sideNames: () => themes.current.sideNames,
+      sideNames: () => display.current.theme.sideNames,
       onGameOver: (_s, humanWon) => showOver(humanWon),
       onGameResumed: hideOverlay,
     });
@@ -250,9 +264,10 @@ export class App {
       h('div', { class: 'board-wrap' }, board.el),
       hud.bottom,
     );
-    const offTheme = themes.onChange((t) => {
-      board.setTheme(t);
-      hud.setTheme(t);
+    hud.setTheme(display.current.theme, display.current);
+    const offTheme = display.onChange((d) => {
+      board.setTheme(d.theme, d);
+      hud.setTheme(d.theme, d);
       controller.refresh();
     });
     this.swap(screen, () => {

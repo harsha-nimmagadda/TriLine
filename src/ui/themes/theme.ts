@@ -32,6 +32,24 @@ export const REQUIRED_CSS_VARS = [
 
 export type CssVar = (typeof REQUIRED_CSS_VARS)[number];
 
+/** Image paths (relative to the app base URL) per quality level. Ultra falls back to High if absent. */
+export interface ImageSet {
+  high?: string;
+  ultra?: string;
+}
+
+/** Optional raster assets for High / Ultra quality. Anything missing falls back to the SVG rendering. */
+export interface ThemeAssets {
+  /** Board floor texture (square). */
+  board?: ImageSet;
+  /** Size of one texture tile in board units (600 = one image across the whole board; smaller tiles it). */
+  boardTile?: number;
+  /** Page background (any aspect ratio, drawn with cover). */
+  background?: ImageSet;
+  /** Piece images with transparency, [player 1, player 2]. */
+  pieces?: [ImageSet | undefined, ImageSet | undefined];
+}
+
 export interface StrokeLayer {
   stroke: string;
   width: number;
@@ -89,6 +107,8 @@ export interface Theme {
    * (luminance contrast) and visible against the board.
    */
   swatches: { side0: string; side1: string; board: string };
+  /** Raster assets used at High / Ultra quality. */
+  assets?: ThemeAssets;
   /** Piece artwork centred on (0,0) with nominal radius `r`. Sides must also differ in shape/marking. */
   piece(player: Player, r: number): string;
 }

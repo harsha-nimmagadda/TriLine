@@ -23,6 +23,8 @@ export function installThemeDefs(): void {
   clear(holder);
   const defs = svgEl('defs');
   for (const t of THEMES) for (const n of svgFragment(t.defs)) defs.append(n);
+  // Shared by raster pieces at Ultra quality.
+  for (const n of svgFragment('<filter id="q-shadow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2.4"/></filter>')) defs.append(n);
   holder.append(defs);
 }
 

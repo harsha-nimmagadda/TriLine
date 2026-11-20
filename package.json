@@ -9,9 +9,11 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "ai-ladder": "tsx scripts/ai-ladder.ts"
+    "ai-ladder": "tsx scripts/ai-ladder.ts",
+    "dev:lan": "vite --host"
   },
   "devDependencies": {
+    "@types/node": "26.6.6",
     "tsx": "4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",

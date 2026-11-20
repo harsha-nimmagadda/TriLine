@@ -1,5 +1,6 @@
 import { GameState, Player, opponent } from '../engine/state';
 import { clear, h, svgEl, svgFragment } from './dom';
+import { stripFilters } from './fx';
 import type { Theme } from './themes/theme';
 
 export interface PlayerLabel {
@@ -94,10 +95,16 @@ export class Hud {
   }
 
   /** Redraw the piece icons in the player cards for a new theme. */
-  setTheme(theme: Theme): void {
+  setTheme(theme: Theme, render: { level: string; assets: { pieces: [string | undefined, string | undefined] } } = { level: 'medium', assets: { pieces: [undefined, undefined] } }): void {
     for (const p of [0, 1] as const) {
       clear(this.icons[p]);
-      for (const n of svgFragment(theme.piece(p, 17))) this.icons[p].append(n);
+      const raster = render.assets.pieces[p];
+      if (raster) {
+        this.icons[p].append(svgEl('image', { href: raster, x: -20, y: -20, width: 40, height: 40 }));
+        continue;
+      }
+      const markup = svgFragment(theme.piece(p, 17));
+      for (const n of render.level === 'low' ? stripFilters(markup) : markup) this.icons[p].append(n);
     }
   }
 

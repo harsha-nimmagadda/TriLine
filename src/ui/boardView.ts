@@ -2,6 +2,9 @@ import { MILLS, NUM_POINTS, pointGrid } from '../engine/board';
 import type { Action, GameState, Player } from '../engine/state';
 import { clear, svgEl, svgFragment } from './dom';
 import type { Theme } from './themes/theme';
+import { LoadedAssets, NO_ASSETS } from './assets';
+import { stripFilters } from './fx';
+import type { QualityLevel } from './quality';
 
 const SIZE = 600;
 const CELL = 80;
@@ -15,6 +18,14 @@ export interface Overlay {
   /** Opponent pieces that may be removed. */
   capturable: readonly number[];
 }
+
+/** How to render: quality level plus any preloaded raster assets (empty = pure SVG). */
+export interface RenderOptions {
+  level: QualityLevel;
+  assets: LoadedAssets;
+}
+export const DEFAULT_RENDER: RenderOptions = { level: 'medium', assets: NO_ASSETS };
+let boardCounter = 0;
 
 export const NO_OVERLAY: Overlay = { selected: null, targets: [], capturable: [] };
 
@@ -37,9 +48,12 @@ export class BoardView {
   private lastOverlay: Overlay = NO_OVERLAY;
   private lastMovable: readonly number[] = [];
 
+  private uid = `bv${++boardCounter}`;
+
   constructor(
     private theme: Theme,
     private onTap: (point: number) => void,
+    private render: RenderOptions = DEFAULT_RENDER,
   ) {
     this.el = svgEl('svg', {
       viewBox: `0 0 ${SIZE} ${SIZE}`,
@@ -56,15 +70,35 @@ export class BoardView {
   /** (Re)draw the themed board furniture: floor, lines, layers and tap targets. */
   private build(): void {
     clear(this.el);
-    for (const n of svgFragment(this.theme.floor)) this.el.append(n);
+    const floor = this.render.assets.board ? this.rasterFloor(this.render.assets.board) : svgFragment(this.theme.floor);
+    const nodes = this.render.level === 'low' && !this.render.assets.board ? stripFilters(floor) : floor;
+    for (const n of nodes) this.el.append(n);
     this.el.append(this.buildLines());
     this.el.append(this.glowLayer, this.hlLayer, this.pieceLayer, this.buildHits());
   }
 
-  /** Switch theme in place, keeping pieces and highlights. */
-  setTheme(theme: Theme, animate = true): void {
-    if (theme === this.theme) return;
+  /** Board floor from a photographic texture: one image, or a tiled pattern, with rounded corners. */
+  private rasterFloor(url: string): Node[] {
+    const id = this.uid;
+    const tile = this.render.assets.boardTile ?? SIZE;
+    const ultra = this.render.level === 'ultra';
+    const fill = tile >= SIZE ? `<image href="${url}" x="0" y="0" width="${SIZE}" height="${SIZE}" preserveAspectRatio="xMidYMid slice"/>` : `<rect width="${SIZE}" height="${SIZE}" fill="url(#${id}-pat)"/>`;
+    return svgFragment(`
+      <defs>
+        <clipPath id="${id}-clip"><rect width="${SIZE}" height="${SIZE}" rx="22"/></clipPath>
+        <pattern id="${id}-pat" width="${tile}" height="${tile}" patternUnits="userSpaceOnUse"><image href="${url}" width="${tile}" height="${tile}" preserveAspectRatio="none"/></pattern>
+        <radialGradient id="${id}-light" cx="30%" cy="22%" r="85%"><stop offset="0%" stop-color="#fff" stop-opacity="0.16"/><stop offset="60%" stop-color="#fff" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity="0.22"/></radialGradient>
+      </defs>
+      <g clip-path="url(#${id}-clip)">${fill}${ultra ? `<rect width="${SIZE}" height="${SIZE}" fill="url(#${id}-light)"/>` : ''}</g>
+      <rect x="3" y="3" width="${SIZE - 6}" height="${SIZE - 6}" rx="20" fill="none" stroke="#000" stroke-opacity="0.45" stroke-width="6"/>`);
+  }
+
+  /** Switch theme (and/or quality) in place, keeping pieces and highlights. */
+  setTheme(theme: Theme, render: RenderOptions = this.render, animate = true): void {
+    if (theme === this.theme && render === this.render) return;
     this.theme = theme;
+    this.render = render;
+    if (this.render.level === 'low') animate = false;
     clear(this.pieceLayer);
     clear(this.glowLayer);
     this.pieces.clear();
@@ -92,18 +126,20 @@ export class BoardView {
       }
       return strokes;
     };
+    const low = this.render.level === 'low';
     for (const layer of t.layers ?? []) {
+      if (low && layer.filter) continue; // blur/glow layers need filters
       const lg = geometry({
         stroke: layer.stroke,
         'stroke-width': layer.width,
         ...(layer.opacity !== undefined ? { opacity: layer.opacity } : {}),
-        ...(layer.filter ? { filter: layer.filter } : {}),
+        ...(layer.filter && !low ? { filter: layer.filter } : {}),
       });
       if (layer.dx || layer.dy) lg.setAttribute('transform', `translate(${layer.dx ?? 0} ${layer.dy ?? 0})`);
       g.append(lg);
     }
-    g.append(geometry({ stroke: t.stroke, 'stroke-width': t.width, ...(t.filter ? { filter: t.filter } : {}) }));
-    const dots = svgEl('g', t.pointFilter ? { filter: t.pointFilter } : {});
+    g.append(geometry({ stroke: t.stroke, 'stroke-width': t.width, ...(t.filter && !low ? { filter: t.filter } : {}) }));
+    const dots = svgEl('g', t.pointFilter && !low ? { filter: t.pointFilter } : {});
     g.append(dots);
     for (let i = 0; i < NUM_POINTS; i++) {
       const { x, y } = pointXY(i);
@@ -153,7 +189,17 @@ export class BoardView {
     const outer = svgEl('g', { class: 'piece', 'data-player': player, 'data-point': point });
     outer.style.transform = `translate(${x}px, ${y}px)`;
     const body = svgEl('g', { class: animateIn ? 'piece-body pop' : 'piece-body' });
-    for (const n of svgFragment(this.theme.piece(player, PIECE_R))) body.append(n);
+    const raster = this.render.assets.pieces[player];
+    if (raster) {
+      const half = PIECE_R * 1.22;
+      if (this.render.level === 'ultra') {
+        body.append(svgEl('ellipse', { cx: 1.5, cy: PIECE_R * 0.45, rx: PIECE_R * 0.95, ry: PIECE_R * 0.5, fill: '#000', opacity: 0.4, filter: 'url(#q-shadow)' }));
+      }
+      body.append(svgEl('image', { href: raster, x: -half, y: -half, width: half * 2, height: half * 2 }));
+    } else {
+      const markup = svgFragment(this.theme.piece(player, PIECE_R));
+      for (const n of this.render.level === 'low' ? stripFilters(markup) : markup) body.append(n);
+    }
     outer.append(body);
     this.pieceLayer.append(outer);
     this.pieces.set(point, outer);
@@ -233,7 +279,7 @@ export class BoardView {
         stroke: this.theme.highlight.mill,
         'stroke-width': 14,
         'stroke-linecap': 'round',
-        filter: this.theme.highlight.millFilter,
+        ...(this.render.level === 'low' ? {} : { filter: this.theme.highlight.millFilter }),
       });
       this.glowLayer.append(line);
       this.schedule(() => line.remove(), 1500);
