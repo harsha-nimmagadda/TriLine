@@ -11,7 +11,11 @@ import { SoundManager } from './sound';
 import { DEFAULT_THEME, Theme } from './themes';
 import { OnlineFlow } from './online';
 
-const DIFF_LABEL: Record<Difficulty, string> = { easy: 'Easy', medium: 'Medium', hard: 'Hard' };
+const DIFF_LABEL: Record<Difficulty, { text: string; sub: string }> = {
+  easy: { text: 'Easy', sub: 'For kids' },
+  medium: { text: 'Medium', sub: 'New to the game' },
+  hard: { text: 'Hard', sub: 'Veteran' },
+};
 
 /** Owns the screen stack: home, setup, game. */
 export class App {
@@ -126,7 +130,7 @@ export class App {
       fields.push(
         segmented<Difficulty>(
           'Difficulty',
-          DIFFICULTIES.map((d) => ({ value: d, text: DIFF_LABEL[d] })),
+          DIFFICULTIES.map((d) => ({ value: d, text: DIFF_LABEL[d].text, sub: DIFF_LABEL[d].sub })),
           () => cfg.difficulty,
           (v) => (cfg.difficulty = v),
         ),

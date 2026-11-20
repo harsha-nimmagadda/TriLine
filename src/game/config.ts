@@ -10,4 +10,4 @@ export interface GameConfig {
   human: Player;
 }
 
-export const DEFAULT_CONFIG: GameConfig = { mode: 'local', pieces: 9, difficulty: 'medium', human: 0 };
+export const DEFAULT_CONFIG: GameConfig = { mode: 'local', pieces: 9, difficulty: 'easy', human: 0 };

@@ -22,30 +22,57 @@ function mulberry(seed: number) {
 }
 
 describe('AI search', () => {
-  it('completes a dhadi when it can (placing)', () => {
-    const s = makeState({ p1: [0, 1], p2: [8, 12], hand: [5, 5], turn: 0 });
-    for (const d of DIFFICULTIES) {
-      // At depth 1 (and noise-free) the immediate dhadi is clearly best; deeper searches may
-      // legitimately prefer a double threat.
-      const a = chooseAction(s, d, { rng: mulberry(1), timeMs: 300, maxDepth: 1, noise: 0 });
-      expect(a).toEqual({ type: 'place', to: 2 });
-    }
-  });
-
-  it('easy usually takes an obvious capture even with noise', () => {
-    const s = makeState({ p1: [0, 1], p2: [8, 12], hand: [5, 5], turn: 0 });
+  const openMill = () => makeState({ p1: [0, 1], p2: [8, 12], hand: [5, 5], turn: 0 });
+  const rate = (s: GameState, d: 'easy' | 'medium' | 'hard', pred: (a: Action) => boolean, n = 200) => {
     let hits = 0;
-    for (let i = 0; i < 20; i++) {
-      const a = chooseAction(s, 'easy', { rng: mulberry(100 + i) });
-      if (s && a.type === 'place' && (a.to === 2 || a.to === 9 || a.to === 6 || a.to === 7)) hits++;
-    }
-    expect(hits).toBeGreaterThanOrEqual(15);
+    for (let i = 0; i < n; i++) if (pred(chooseAction(s, d, { rng: mulberry(1000 + i), timeMs: 100, maxDepth: 2 }))) hits++;
+    return hits / n;
+  };
+
+  it('hard always completes an open dhadi (shallow search)', () => {
+    const a = chooseAction(openMill(), 'hard', { rng: mulberry(1), timeMs: 300, maxDepth: 1, noise: 0 });
+    expect(a).toEqual({ type: 'place', to: 2 });
   });
 
-  it('blocks an opponent dhadi when it cannot win material itself (placing)', () => {
+  it('completes an open dhadi at the intended rate per level (easy ~50%, medium usually, hard always)', () => {
+    const completes = (a: Action) => a.type === 'place' && a.to === 2;
+    const easy = rate(openMill(), 'easy', completes);
+    const medium = rate(openMill(), 'medium', completes);
+    const hard = rate(openMill(), 'hard', (a) => a.type === 'place' && a.to !== 99, 20);
+    expect(easy).toBeGreaterThan(0.4);
+    expect(easy).toBeLessThan(0.65);
+    expect(medium).toBeGreaterThan(0.75);
+    expect(hard).toBe(1);
+  });
+
+  it('hard blocks an opponent dhadi when it cannot win material itself (placing)', () => {
     const s = makeState({ p1: [16, 20], p2: [8, 9], hand: [5, 5], turn: 0 });
-    const a = chooseAction(s, 'medium', { rng: mulberry(2) });
+    const a = chooseAction(s, 'hard', { rng: mulberry(2), maxDepth: 4, timeMs: undefined });
     expect(a).toEqual({ type: 'place', to: 10 });
+  });
+
+  it('blocking rate: easy rarely, medium usually but not always', () => {
+    const s = makeState({ p1: [16, 20], p2: [8, 9], hand: [5, 5], turn: 0 });
+    const blocks = (a: Action) => a.type === 'place' && a.to === 10;
+    const easy = rate(s, 'easy', blocks);
+    const medium = rate(s, 'medium', blocks);
+    expect(easy).toBeLessThan(0.35);
+    expect(medium).toBeGreaterThan(0.55);
+    expect(medium).toBeLessThan(0.9);
+    expect(medium).toBeGreaterThan(easy + 0.3);
+  });
+
+  it('easy removes a random allowed piece only (never a protected one)', () => {
+    // P2 has a dhadi 8,9,10 and loose pieces 20, 22; P1 just formed a dhadi.
+    let s = makeState({ p1: [0, 1], p2: [8, 9, 10, 20, 22], hand: [5, 3], turn: 0 });
+    s = applyAction(s, { type: 'place', to: 2 });
+    const picks = new Set<number>();
+    for (let i = 0; i < 60; i++) {
+      const a = chooseAction(s, 'easy', { rng: mulberry(i) });
+      expect(isLegalAction(s, a)).toBe(true);
+      picks.add((a as { at: number }).at);
+    }
+    expect([...picks].sort()).toEqual([20, 22]);
   });
 
   it('completes a dhadi by sliding (moving phase)', () => {
@@ -59,7 +86,7 @@ describe('AI search', () => {
     let s = makeState({ p1: [0, 1], p2: [8, 9, 20], hand: [5, 4], turn: 0 });
     s = applyAction(s, { type: 'place', to: 2 });
     expect(s.phase).toBe('removing');
-    const a = chooseAction(s, 'medium', { rng: mulberry(4) });
+    const a = chooseAction(s, 'hard', { rng: mulberry(4), timeMs: 200 });
     expect(a.type).toBe('remove');
     expect([8, 9]).toContain((a as { at: number }).at);
   });
