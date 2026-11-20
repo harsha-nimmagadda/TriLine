@@ -72,6 +72,8 @@ export interface Theme {
     pointRadius: number;
     pointStroke?: string;
     pointStrokeWidth?: number;
+    /** Filter applied once to the whole group of point dots (e.g. powder grain). */
+    pointFilter?: string;
   };
   /** Colours used for interactive highlights. */
   highlight: {

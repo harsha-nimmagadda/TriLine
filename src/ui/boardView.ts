@@ -103,9 +103,11 @@ export class BoardView {
       g.append(lg);
     }
     g.append(geometry({ stroke: t.stroke, 'stroke-width': t.width, ...(t.filter ? { filter: t.filter } : {}) }));
+    const dots = svgEl('g', t.pointFilter ? { filter: t.pointFilter } : {});
+    g.append(dots);
     for (let i = 0; i < NUM_POINTS; i++) {
       const { x, y } = pointXY(i);
-      g.append(
+      dots.append(
         svgEl('circle', {
           cx: x,
           cy: y,

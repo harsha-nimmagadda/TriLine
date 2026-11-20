@@ -121,7 +121,9 @@ export function openModal(opts: ModalOptions): ModalHandle {
     body,
     footer,
   );
-  const backdrop = h('div', { class: 'backdrop modal-backdrop' }, panel);
+  // Short dialogs (small / game over) stay centred on phones; tall content slides up as a bottom sheet.
+  const sheet = !/(^|\s)(small|over)(\s|$)/.test(opts.variant ?? '');
+  const backdrop = h('div', { class: `backdrop modal-backdrop${sheet ? ' sheet' : ''}` }, panel);
 
   // Scroll affordances: shadow under the header / above the footer when content is clipped.
   const updateScroll = () => {
