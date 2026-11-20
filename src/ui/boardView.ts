@@ -248,7 +248,12 @@ export class BoardView {
     outer.append(body);
     if (animateIn) {
       outer.classList.add('landing');
-      this.schedule(() => outer.classList.remove('landing'), 360);
+      // The entrance animations must not outlive their run: a lingering `pop` class replays whenever another
+      // animation rule on the same element (e.g. `.movable` nudge) is removed, making existing pieces flash.
+      this.schedule(() => {
+        outer.classList.remove('landing');
+        body.classList.remove('pop');
+      }, 360);
     }
     this.pieceLayer.append(outer);
     this.pieces.set(point, outer);
