@@ -73,7 +73,7 @@ export class BoardView {
     const floor = this.render.assets.board ? this.rasterFloor(this.render.assets.board) : svgFragment(this.theme.floor);
     const nodes = this.render.level === 'low' && !this.render.assets.board ? stripFilters(floor) : floor;
     for (const n of nodes) this.el.append(n);
-    this.el.append(this.buildLines());
+    if (!this.render.assets.boardIncludesLines || !this.render.assets.board) this.el.append(this.buildLines());
     this.el.append(this.glowLayer, this.hlLayer, this.pieceLayer, this.buildHits());
   }
 
@@ -81,16 +81,17 @@ export class BoardView {
   private rasterFloor(url: string): Node[] {
     const id = this.uid;
     const tile = this.render.assets.boardTile ?? SIZE;
-    const ultra = this.render.level === 'ultra';
+    const baked = !!this.render.assets.boardIncludesLines;
+    const ultra = this.render.level === 'ultra' && !baked;
     const fill = tile >= SIZE ? `<image href="${url}" x="0" y="0" width="${SIZE}" height="${SIZE}" preserveAspectRatio="xMidYMid slice"/>` : `<rect width="${SIZE}" height="${SIZE}" fill="url(#${id}-pat)"/>`;
     return svgFragment(`
       <defs>
-        <clipPath id="${id}-clip"><rect width="${SIZE}" height="${SIZE}" rx="22"/></clipPath>
+        <clipPath id="${id}-clip"><rect width="${SIZE}" height="${SIZE}" rx="${baked ? 8 : 22}"/></clipPath>
         <pattern id="${id}-pat" width="${tile}" height="${tile}" patternUnits="userSpaceOnUse"><image href="${url}" width="${tile}" height="${tile}" preserveAspectRatio="none"/></pattern>
         <radialGradient id="${id}-light" cx="30%" cy="22%" r="85%"><stop offset="0%" stop-color="#fff" stop-opacity="0.16"/><stop offset="60%" stop-color="#fff" stop-opacity="0"/><stop offset="100%" stop-color="#000" stop-opacity="0.22"/></radialGradient>
       </defs>
       <g clip-path="url(#${id}-clip)">${fill}${ultra ? `<rect width="${SIZE}" height="${SIZE}" fill="url(#${id}-light)"/>` : ''}</g>
-      <rect x="3" y="3" width="${SIZE - 6}" height="${SIZE - 6}" rx="20" fill="none" stroke="#000" stroke-opacity="0.45" stroke-width="6"/>`);
+      ${baked ? '' : `<rect x="3" y="3" width="${SIZE - 6}" height="${SIZE - 6}" rx="20" fill="none" stroke="#000" stroke-opacity="0.45" stroke-width="6"/>`}`);
   }
 
   /** Switch theme (and/or quality) in place, keeping pieces and highlights. */
@@ -184,14 +185,25 @@ export class BoardView {
     this.timers.add(id);
   }
 
+  private placeSeq = 0;
+
+  /** Stable pseudo-random variant: placements use a per-board counter, redraws use the point, so a piece never flickers. */
+  private variantIndex(player: Player, point: number, fresh: boolean, n: number): number {
+    const key = (player + 1) * 7919 + (fresh ? ++this.placeSeq * 104729 : (point + 13) * 15485863);
+    let h = Math.imul(key ^ (key >>> 13), 0x5bd1e995);
+    h ^= h >>> 15;
+    return (h >>> 0) % n;
+  }
+
   private createPiece(point: number, player: Player, animateIn: boolean): SVGGElement {
     const { x, y } = pointXY(point);
     const outer = svgEl('g', { class: 'piece', 'data-player': player, 'data-point': point });
     outer.style.transform = `translate(${x}px, ${y}px)`;
     const body = svgEl('g', { class: animateIn ? 'piece-body pop' : 'piece-body' });
-    const raster = this.render.assets.pieces[player];
+    const variants = this.render.assets.pieceVariants?.[player] ?? [];
+    const raster = variants.length > 0 ? variants[this.variantIndex(player, point, animateIn, variants.length)] : this.render.assets.pieces[player];
     if (raster) {
-      const half = PIECE_R * 1.22;
+      const half = PIECE_R * (this.render.assets.boardIncludesLines ? 1.1 : 1.22);
       if (this.render.level === 'ultra') {
         body.append(svgEl('ellipse', { cx: 1.5, cy: PIECE_R * 0.45, rx: PIECE_R * 0.95, ry: PIECE_R * 0.5, fill: '#000', opacity: 0.4, filter: 'url(#q-shadow)' }));
       }

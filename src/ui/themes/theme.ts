@@ -36,6 +36,8 @@ export type CssVar = (typeof REQUIRED_CSS_VARS)[number];
 export interface ImageSet {
   high?: string;
   ultra?: string;
+  /** Pieces only: several Ultra images for the same side; each placed piece gets a stable pseudo-random one. */
+  ultraVariants?: string[];
 }
 
 /** Optional raster assets for High / Ultra quality. Anything missing falls back to the SVG rendering. */
@@ -44,6 +46,8 @@ export interface ThemeAssets {
   board?: ImageSet;
   /** Size of one texture tile in board units (600 = one image across the whole board; smaller tiles it). */
   boardTile?: number;
+  /** True if the board image already contains the lines and point holes (so the SVG lines are not drawn). */
+  boardIncludesLines?: boolean;
   /** Page background (any aspect ratio, drawn with cover). */
   background?: ImageSet;
   /** Piece images with transparency, [player 1, player 2]. */

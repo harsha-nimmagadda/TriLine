@@ -110,19 +110,25 @@ describe('asset manifest', () => {
     for (const t of THEMES) {
       for (const lvl of ['high', 'ultra'] as const) {
         const w = wantedPaths(t.assets, lvl);
-        for (const p of [w.board, w.background, ...w.pieces]) if (p) expect(existsSync(join('public', p)), `${t.id} ${p}`).toBe(true);
+        for (const p of [w.board, w.background, ...w.pieces, ...w.pieceVariants[0], ...w.pieceVariants[1]]) if (p) expect(existsSync(join('public', p)), `${t.id} ${p}`).toBe(true);
       }
     }
   });
   it('loads everything when probes succeed, and only the pieces that fail are dropped', async () => {
     const ok = await loadAssets(granite, 'high', async () => true, '/');
     expect(ok.board).toBe('/assets/granite/board.high.webp');
-    expect(ok.boardTile).toBe(granite.assets!.boardTile);
-    expect(ok.pieces[0]).toContain('piece_p1.high');
+    expect(ok.boardIncludesLines).toBe(true);
+    expect(ok.pieces[0]).toContain('piece_p1_0.high');
+    expect(ok.pieceVariants[0]).toEqual([]); // variants are Ultra-only
     const partial = await loadAssets(granite, 'ultra', async (u) => !u.includes('piece_p2'), '/');
     expect(partial.board).toContain('board.ultra');
     expect(partial.pieces[1]).toBeUndefined();
+    expect(partial.pieceVariants[1]).toEqual([]);
     expect(partial.pieces[0]).toBeDefined();
+    expect(partial.pieceVariants[0].length).toBe(6);
+    // a broken variant is dropped, the rest survive
+    const some = await loadAssets(granite, 'ultra', async (u) => !u.includes('piece_p1_3'), '/');
+    expect(some.pieceVariants[0].length).toBe(5);
   });
   it('falls back to SVG (no assets) on Medium/Low, on theme without assets, and on load errors', async () => {
     expect((await loadAssets(granite, 'medium', async () => true)).board).toBeUndefined();

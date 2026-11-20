@@ -7,10 +7,14 @@ export interface LoadedAssets {
   /** Size of one board texture tile in board units (600 = a single image). */
   boardTile?: number;
   background?: string;
+  /** The board image already has the lines and point holes carved in. */
+  boardIncludesLines?: boolean;
   pieces: [string | undefined, string | undefined];
+  /** Ultra: several images per side; pieces choose one deterministically. */
+  pieceVariants: [string[], string[]];
 }
 
-export const NO_ASSETS: LoadedAssets = { pieces: [undefined, undefined] };
+export const NO_ASSETS: LoadedAssets = { pieces: [undefined, undefined], pieceVariants: [[], []] };
 
 /** Path for a quality level from a per-level set. Ultra falls back to High; Low/Medium use none. */
 export function pickAssetPath(set: ImageSet | undefined, level: QualityLevel): string | undefined {
@@ -32,6 +36,11 @@ export function wantedPaths(assets: ThemeAssets | undefined, level: QualityLevel
     background: pickAssetPath(assets?.background, level),
     pieces: [pickAssetPath(assets?.pieces?.[0], level), pickAssetPath(assets?.pieces?.[1], level)] as [string | undefined, string | undefined],
     boardTile: assets?.boardTile,
+    boardIncludesLines: assets?.boardIncludesLines,
+    pieceVariants: [
+      level === 'ultra' ? (assets?.pieces?.[0]?.ultraVariants ?? []) : [],
+      level === 'ultra' ? (assets?.pieces?.[1]?.ultraVariants ?? []) : [],
+    ] as [string[], string[]],
   };
 }
 
@@ -79,5 +88,17 @@ export async function loadAssets(theme: Theme, level: QualityLevel, probe: Probe
     }
   };
   const [board, background, p0, p1] = await Promise.all([check(want.board), check(want.background), check(want.pieces[0]), check(want.pieces[1])]);
-  return { board, boardTile: board ? want.boardTile : undefined, background, pieces: [p0, p1] };
+  const variants = await Promise.all(
+    want.pieceVariants.map(async (list) => (await Promise.all(list.map((x) => check(x)))).filter((u): u is string => !!u)),
+  );
+  const pieceVariants = [variants[0] ?? [], variants[1] ?? []] as [string[], string[]];
+  return {
+    board,
+    boardTile: board ? want.boardTile : undefined,
+    boardIncludesLines: board ? want.boardIncludesLines : undefined,
+    background,
+    // With variants available, the single-image slot (HUD icons, fallbacks) uses the first variant.
+    pieces: [p0 ?? pieceVariants[0][0], p1 ?? pieceVariants[1][0]],
+    pieceVariants,
+  };
 }
