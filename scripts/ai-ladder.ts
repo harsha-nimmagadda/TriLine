@@ -1,6 +1,6 @@
 /**
  * Plays AI levels against each other and prints win/loss/draw tables.
- * Usage: npm run ai-ladder [-- --games 40 --hard-ms 150 --max-plies 300 --seed 1 --only easy|medium|hard]
+ * Usage: npm run ai-ladder [-- --games 40 --hard-ms 150 --max-plies 300 --seed 1 --only kids|easy|medium|hard|expert (stronger side of a pairing) --expert-ms 150]
  */
 import { chooseAction, Difficulty } from '../src/ai';
 import { Action, GameState, Player, applyAction, createInitialState, legalActions } from '../src/engine';
@@ -14,7 +14,9 @@ function arg(name: string, def: number): number {
   return i >= 0 ? Number(process.argv[i + 1]) : def;
 }
 const GAMES = arg('games', 40);
-const HARD_MS = arg('hard-ms', 150);
+// Time caps are scaled down from the in-game budgets (hard 450 ms, expert 1500 ms).
+const HARD_MS = arg('hard-ms', 50);
+const EXPERT_MS = arg('expert-ms', 150);
 const MAX_PLIES = arg('max-plies', 300);
 const SEED = arg('seed', 1);
 
@@ -35,13 +37,15 @@ const random: Mover = (s, rng) => {
 const level =
   (d: Difficulty): Mover =>
   (s, rng) =>
-    chooseAction(s, d, d === 'hard' ? { rng, timeMs: HARD_MS } : { rng });
+    chooseAction(s, d, d === 'hard' ? { rng, timeMs: HARD_MS } : d === 'expert' ? { rng, timeMs: EXPERT_MS } : { rng });
 
 const PLAYERS: Record<string, Mover> = {
   random,
+  kids: level('kids'),
   easy: level('easy'),
   medium: level('medium'),
   hard: level('hard'),
+  expert: level('expert'),
 };
 
 /** Returns winner index among (a, b): 0 = a, 1 = b, null = draw. */
@@ -60,13 +64,15 @@ function playGame(a: Mover, b: Mover, aIsLight: boolean, rng: () => number): 0 |
 }
 
 const pairings: [string, string][] = [
-  ['easy', 'random'],
+  ['kids', 'random'],
+  ['easy', 'kids'],
   ['medium', 'easy'],
   ['hard', 'medium'],
+  ['expert', 'hard'],
 ];
 
 const rng = mulberry(SEED);
-console.log(`Games per pairing: ${GAMES} (colours alternate), Hard time cap ${HARD_MS} ms/move, ${MAX_PLIES}-ply cap\n`);
+console.log(`Games per pairing: ${GAMES} (colours alternate), time caps hard ${HARD_MS} ms / expert ${EXPERT_MS} ms per move, ${MAX_PLIES}-ply cap\n`);
 console.log('Pairing           Win   Loss  Draw  Win%   (stronger listed first)');
 const only = process.argv.indexOf('--only') >= 0 ? process.argv[process.argv.indexOf('--only') + 1] : null;
 for (const [x, y] of pairings) {

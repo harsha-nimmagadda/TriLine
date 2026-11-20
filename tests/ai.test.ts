@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DIFFICULTIES, chooseAction, evaluate, searchBestAction } from '../src/ai';
+import { DIFFICULTIES, Difficulty, LEGACY_DIFFICULTY, chooseAction, evaluate, migrateDifficulty, searchBestAction } from '../src/ai';
 import {
   Action,
   GameState,
@@ -23,22 +23,22 @@ function mulberry(seed: number) {
 
 describe('AI search', () => {
   const openMill = () => makeState({ p1: [0, 1], p2: [8, 12], hand: [5, 5], turn: 0 });
-  const rate = (s: GameState, d: 'easy' | 'medium' | 'hard', pred: (a: Action) => boolean, n = 200) => {
+  const rate = (s: GameState, d: Difficulty, pred: (a: Action) => boolean, n = 200) => {
     let hits = 0;
     for (let i = 0; i < n; i++) if (pred(chooseAction(s, d, { rng: mulberry(1000 + i), timeMs: 100, maxDepth: 2 }))) hits++;
     return hits / n;
   };
 
   it('hard always completes an open dhadi (shallow search)', () => {
-    const a = chooseAction(openMill(), 'hard', { rng: mulberry(1), timeMs: 300, maxDepth: 1, noise: 0 });
+    const a = chooseAction(openMill(), 'expert', { rng: mulberry(1), timeMs: 300, maxDepth: 1, noise: 0 });
     expect(a).toEqual({ type: 'place', to: 2 });
   });
 
   it('completes an open dhadi at the intended rate per level (easy ~50%, medium usually, hard always)', () => {
     const completes = (a: Action) => a.type === 'place' && a.to === 2;
-    const easy = rate(openMill(), 'easy', completes);
-    const medium = rate(openMill(), 'medium', completes);
-    const hard = rate(openMill(), 'hard', (a) => a.type === 'place' && a.to !== 99, 20);
+    const easy = rate(openMill(), 'kids', completes);
+    const medium = rate(openMill(), 'easy', completes);
+    const hard = rate(openMill(), 'expert', (a) => a.type === 'place' && a.to !== 99, 20);
     expect(easy).toBeGreaterThan(0.4);
     expect(easy).toBeLessThan(0.65);
     expect(medium).toBeGreaterThan(0.75);
@@ -47,15 +47,15 @@ describe('AI search', () => {
 
   it('hard blocks an opponent dhadi when it cannot win material itself (placing)', () => {
     const s = makeState({ p1: [16, 20], p2: [8, 9], hand: [5, 5], turn: 0 });
-    const a = chooseAction(s, 'hard', { rng: mulberry(2), maxDepth: 4, timeMs: undefined });
+    const a = chooseAction(s, 'expert', { rng: mulberry(2), maxDepth: 4, timeMs: undefined });
     expect(a).toEqual({ type: 'place', to: 10 });
   });
 
   it('blocking rate: easy rarely, medium usually but not always', () => {
     const s = makeState({ p1: [16, 20], p2: [8, 9], hand: [5, 5], turn: 0 });
     const blocks = (a: Action) => a.type === 'place' && a.to === 10;
-    const easy = rate(s, 'easy', blocks);
-    const medium = rate(s, 'medium', blocks);
+    const easy = rate(s, 'kids', blocks);
+    const medium = rate(s, 'easy', blocks);
     expect(easy).toBeLessThan(0.35);
     expect(medium).toBeGreaterThan(0.55);
     expect(medium).toBeLessThan(0.9);
@@ -68,16 +68,48 @@ describe('AI search', () => {
     s = applyAction(s, { type: 'place', to: 2 });
     const picks = new Set<number>();
     for (let i = 0; i < 60; i++) {
-      const a = chooseAction(s, 'easy', { rng: mulberry(i) });
+      const a = chooseAction(s, 'kids', { rng: mulberry(i) });
       expect(isLegalAction(s, a)).toBe(true);
       picks.add((a as { at: number }).at);
     }
     expect([...picks].sort()).toEqual([20, 22]);
   });
 
+  it('hard and expert always take an immediate dhadi and block; medium usually does', () => {
+    const completes = (a: Action) => a.type === 'place' && a.to === 2;
+    const block = makeState({ p1: [16, 20], p2: [8, 9], hand: [5, 5], turn: 0 });
+    const blocks = (a: Action) => a.type === 'place' && a.to === 10;
+    for (const d of ['hard', 'expert'] as const) {
+      const opts = { maxDepth: 1, timeMs: undefined, noise: 0 } as const;
+      expect(chooseAction(openMill(), d, { rng: mulberry(7), ...opts })).toEqual({ type: 'place', to: 2 });
+      // Slide completion in the moving phase.
+      const slide = makeState({ p1: [0, 1, 3, 20], p2: [10, 12, 14, 22], hand: [0, 0], turn: 0 });
+      expect(chooseAction(slide, d, { rng: mulberry(8), maxDepth: 2, timeMs: undefined })).toEqual({ type: 'move', from: 3, to: 2 });
+    }
+    expect(chooseAction(block, 'hard', { rng: mulberry(9), maxDepth: 4, timeMs: undefined })).toEqual({ type: 'place', to: 10 });
+    expect(chooseAction(block, 'expert', { rng: mulberry(9), maxDepth: 4, timeMs: undefined })).toEqual({ type: 'place', to: 10 });
+    expect(rate(openMill(), 'medium', completes)).toBeGreaterThan(0.8);
+    expect(rate(block, 'medium', blocks)).toBeGreaterThan(0.8);
+  });
+
+  it('levels order: kids block least, then easy, then medium', () => {
+    const s = makeState({ p1: [16, 20], p2: [8, 9], hand: [5, 5], turn: 0 });
+    const blocks = (a: Action) => a.type === 'place' && a.to === 10;
+    expect(rate(s, 'kids', blocks)).toBeLessThan(rate(s, 'easy', blocks));
+    expect(rate(s, 'easy', blocks)).toBeLessThan(rate(s, 'medium', blocks));
+  });
+
+  it('knows five levels and migrates legacy names safely', () => {
+    expect(DIFFICULTIES).toEqual(['kids', 'easy', 'medium', 'hard', 'expert']);
+    expect(migrateDifficulty('expert')).toBe('expert');
+    expect(migrateDifficulty('banana')).toBeNull();
+    expect(migrateDifficulty(null)).toBeNull();
+    expect(LEGACY_DIFFICULTY).toEqual({ easy: 'kids', medium: 'easy', hard: 'expert' });
+  });
+
   it('completes a dhadi by sliding (moving phase)', () => {
     const s = makeState({ p1: [0, 1, 3, 20], p2: [10, 12, 14, 22], hand: [0, 0], turn: 0 });
-    const a = chooseAction(s, 'hard', { timeMs: 300, rng: mulberry(3) });
+    const a = chooseAction(s, 'expert', { timeMs: 300, rng: mulberry(3) });
     expect(a).toEqual({ type: 'move', from: 3, to: 2 });
   });
 
@@ -86,7 +118,7 @@ describe('AI search', () => {
     let s = makeState({ p1: [0, 1], p2: [8, 9, 20], hand: [5, 4], turn: 0 });
     s = applyAction(s, { type: 'place', to: 2 });
     expect(s.phase).toBe('removing');
-    const a = chooseAction(s, 'hard', { rng: mulberry(4), timeMs: 200 });
+    const a = chooseAction(s, 'expert', { rng: mulberry(4), timeMs: 200 });
     expect(a.type).toBe('remove');
     expect([8, 9]).toContain((a as { at: number }).at);
   });
@@ -130,7 +162,7 @@ describe('AI search', () => {
     let s = createInitialState(9);
     let plies = 0;
     while (s.phase !== 'gameover' && plies < 400) {
-      const a: Action = chooseAction(s, plies % 2 ? 'easy' : 'medium', { rng, maxDepth: 2, timeMs: 200 });
+      const a: Action = chooseAction(s, plies % 2 ? 'kids' : 'easy', { rng, maxDepth: 2, timeMs: 200 });
       expect(isLegalAction(s, a)).toBe(true);
       s = applyAction(s, a);
       plies++;

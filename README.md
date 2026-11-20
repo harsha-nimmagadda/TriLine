@@ -21,9 +21,15 @@ npm run ai-ladder  # plays AI levels against each other and prints win/loss/draw
 
 ## Computer levels
 
-- **Easy** (for kids): casual, mostly random play; completes an open dhadi about half the time and rarely blocks.
-- **Medium** (new to the game): 2-ply search with some noise; usually completes and blocks but sometimes slips.
-- **Hard** (veteran): iterative-deepening alpha-beta search, about 1.5 s per move.
+Five levels (default: Kids):
+
+- **Kids** (for kids): casual, mostly random play; completes an open dhadi about half the time and rarely blocks.
+- **Easy** (new to the game): 2-ply search with noise; usually completes and blocks but about 3 turns in 10 plays casually.
+- **Medium** (casual player): 2-ply search with a little noise, occasionally slips and misses a block.
+- **Hard** (experienced): iterative deepening to depth 4 within ~450 ms, tiny noise, rare slips.
+- **Expert** (veteran): iterative-deepening alpha-beta search, about 1.5 s per move.
+
+`npm run ai-ladder` plays adjacent levels against each other (time caps scaled down: hard 50 ms, expert 150 ms per move).
 
 ## How to play
 

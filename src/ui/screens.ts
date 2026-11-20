@@ -12,9 +12,11 @@ import { DEFAULT_THEME, Theme } from './themes';
 import { OnlineFlow } from './online';
 
 const DIFF_LABEL: Record<Difficulty, { text: string; sub: string }> = {
-  easy: { text: 'Easy', sub: 'For kids' },
-  medium: { text: 'Medium', sub: 'New to the game' },
-  hard: { text: 'Hard', sub: 'Veteran' },
+  kids: { text: 'Kids', sub: 'For kids' },
+  easy: { text: 'Easy', sub: 'New to the game' },
+  medium: { text: 'Medium', sub: 'Casual player' },
+  hard: { text: 'Hard', sub: 'Experienced' },
+  expert: { text: 'Expert', sub: 'Veteran' },
 };
 
 /** Owns the screen stack: home, setup, game. */
@@ -133,6 +135,7 @@ export class App {
           DIFFICULTIES.map((d) => ({ value: d, text: DIFF_LABEL[d].text, sub: DIFF_LABEL[d].sub })),
           () => cfg.difficulty,
           (v) => (cfg.difficulty = v),
+          true,
         ),
         segmented<number>(
           'You play',

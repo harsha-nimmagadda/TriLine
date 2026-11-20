@@ -5,8 +5,10 @@ export function segmented<T extends string | number>(
   options: { value: T; text: string; sub?: string }[],
   get: () => T,
   set: (v: T) => void,
+  /** Lay options out in a wrapping grid (for 4+ options). */
+  grid = false,
 ): HTMLElement {
-  const group = h('div', { class: 'segmented', attrs: { role: 'radiogroup', 'aria-label': label } });
+  const group = h('div', { class: grid ? 'segmented grid' : 'segmented', attrs: { role: 'radiogroup', 'aria-label': label } });
   const render = () => {
     clear(group);
     for (const o of options) {
