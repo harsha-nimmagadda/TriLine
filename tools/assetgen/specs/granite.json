@@ -1,45 +1,83 @@
 {
   "theme": "granite",
-  "_comment": "Edit prompts freely. 'draft' overrides apply with --draft (fast SDXL-Turbo previews). Sizes are SDXL-friendly.",
+  "_comment": "Granite board pipeline: generated MATERIAL textures + piece sheets (ComfyUI), procedural compositor for the board (tools/assetgen/compose_granite.py). Edit prompts freely.",
   "models": {
     "main": "Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors",
     "draft": "sd_xl_turbo_1.0_fp16.safetensors"
   },
   "params": {
-    "main": { "steps": 30, "cfg": 5.0, "sampler": "dpmpp_2m", "scheduler": "karras" },
-    "draft": { "steps": 4, "cfg": 1.0, "sampler": "euler_ancestral", "scheduler": "normal", "long_edge": 512 }
+    "main": {
+      "steps": 30,
+      "cfg": 5.0,
+      "sampler": "dpmpp_2m",
+      "scheduler": "karras"
+    },
+    "draft": {
+      "steps": 4,
+      "cfg": 1.0,
+      "sampler": "euler_ancestral",
+      "scheduler": "normal",
+      "long_edge": 512
+    }
   },
-  "negative": "text, watermark, logo, signature, border, frame, vignette, people, hands, cartoon, illustration, painting, 3d render, glossy, polished, shiny reflections, wet, blurry, low quality, jpeg artifacts",
+  "negative": "text, watermark, logo, signature, people, hands, cartoon, illustration, painting, 3d render, blurry, low quality, jpeg artifacts",
   "assets": {
-    "board": {
+    "granite_base": {
       "kind": "texture",
-      "width": 1024, "height": 1024,
-      "prompt": "seamless tileable texture of unpolished rough granite stone floor, top-down orthographic view, matte surface, fine speckled grain of grey, black and faint pinkish minerals, slightly rough pitted surface, even soft diffuse lighting, no shadows, no cracks, macro photograph, highly detailed",
-      "negative_extra": "perspective, horizon, cracks, large veins, lighting gradient, hot spots, shadows",
-      "export": { "ultra": 2048, "high": 1024 }
+      "seamless": false,
+      "width": 1024,
+      "height": 1024,
+      "prompt": "top-down macro photograph of a polished slab of uniform near-black granite, extremely fine and sparse tiny gold and white mineral specks scattered evenly, subtle fine grain, smooth finish, flat even diffuse lighting, no shadows, highly detailed, photo of black galaxy granite countertop",
+      "negative_extra": "large gold flakes, gold nuggets, gravel, pebbles, rocks, coarse crystals, grey, brown, pink, white patches, reflections, glare, border, perspective, scratches, cracks",
+      "export": {}
     },
-    "background": {
+    "chisel": {
+      "kind": "texture",
+      "seamless": false,
+      "width": 1024,
+      "height": 1024,
+      "prompt": "top-down macro photograph of rough hand-chiselled light grey-beige granite stone surface, visible chisel tool marks, coarse sandy grain, dusty, matte, flat even diffuse lighting, no shadows, highly detailed",
+      "negative_extra": "dark, black, polished, shiny, wet, cracks, perspective, border, colour cast",
+      "export": {}
+    },
+    "table": {
       "kind": "background",
-      "width": 1344, "height": 768,
-      "prompt": "dark grey granite stone courtyard slab surface, top-down view, very subtle speckled texture, low contrast, soft out-of-focus, uniform dim lighting, calm muted charcoal tones, empty, no objects",
-      "negative_extra": "high contrast, bright spots, objects, plants, people, strong shadows, cracks, perspective horizon",
-      "export": { "ultra": 2560, "high": 1440 }
+      "width": 1344,
+      "height": 768,
+      "prompt": "top-down photograph of a rustic dark wooden plank table, weathered reclaimed oak boards, deep grain, scratches and knots, warm golden hour light, rich dark brown tones, empty, no objects, highly detailed",
+      "negative_extra": "objects, plates, people, bright colours, perspective, horizon, glare, text",
+      "export": {
+        "ultra": 2560,
+        "high": 1440
+      }
     },
-    "piece_p1": {
-      "kind": "piece",
-      "width": 1024, "height": 1024,
-      "bg_color": "magenta",
-      "prompt": "a single cowrie shell, top-down view, creamy ivory white glossy shell with the characteristic toothed slit, isolated object centered, studio product photo, soft even lighting, on a flat solid pure magenta background (#ff00ff)",
-      "negative_extra": "multiple objects, shadow on background, gradient background, text, hands, sand, water",
-      "export": { "ultra": 256, "high": 128 }
+    "sheet_p1": {
+      "kind": "sheet",
+      "width": 1344,
+      "height": 768,
+      "prompt": "top-down studio product photo of eight round polished tiger's eye cabochons, flat domed, golden brown chatoyant bands, arranged in two evenly spaced rows of four, every stone fully separate with generous gaps, on a plain flat matte medium grey background, soft warm light from the upper left, sharp focus",
+      "negative_extra": "touching stones, overlapping, hands, jewelry setting, ring, necklace, text, reflections of objects, dark background, shadows on background",
+      "piece": "p1"
     },
-    "piece_p2": {
-      "kind": "piece",
-      "width": 1024, "height": 1024,
-      "bg_color": "magenta",
-      "prompt": "a single smooth dark river stone, top-down view, polished black-grey pebble with subtle fine texture and a soft highlight, rounded oval, isolated object centered, studio product photo, soft even lighting, on a flat solid pure magenta background (#ff00ff)",
-      "negative_extra": "multiple objects, shadow on background, gradient background, text, hands, sand, water",
-      "export": { "ultra": 256, "high": 128 }
+    "sheet_p2": {
+      "kind": "sheet",
+      "width": 1344,
+      "height": 768,
+      "prompt": "top-down studio product photo of eight round polished lapis lazuli cabochons, flat domed, deep royal blue with fine gold pyrite flecks and a few white calcite veins, arranged in two evenly spaced rows of four, every stone fully separate with generous gaps, on a plain flat matte medium grey background, soft warm light from the upper left, sharp focus",
+      "negative_extra": "touching stones, overlapping, hands, jewelry setting, ring, necklace, text, reflections of objects, dark background, shadows on background",
+      "piece": "p2"
+    },
+    "board": {
+      "kind": "composite",
+      "compositor": "compose_granite",
+      "materials": {
+        "granite": "granite_base",
+        "chisel": "chisel"
+      },
+      "export": {
+        "ultra": 2048,
+        "high": 1024
+      }
     }
   }
 }
